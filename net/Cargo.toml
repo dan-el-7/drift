@@ -1,0 +1,18 @@
+[package]
+name = "drift-net"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.104"
+if-addrs = "0.15"
+drift-core = { version = "0.1.0", path = "../core" }
+prost = "0.14"
+rand = "0.8"
+thiserror = "2.0.21"
+socket2 = "0.6"
+tokio = { version = "1.54.1", features = ["rt", "rt-multi-thread", "macros", "net", "io-util", "sync", "time", "fs", "process"] }
+tracing = "0.1.44"
+
+[dev-dependencies]
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros"] }

@@ -1,0 +1,9 @@
+target/
+research/tmp/
+ui/windows/bin/
+ui/windows/obj/
+dist/
+*.apk
+*.log
+local.properties
+design/icon/preview.png

@@ -1,0 +1,5 @@
+# The `aes` crate (0.8) uses ARMv8's AES instructions only with this cfg (detected at run time, so
+# phones without them still work). Without it the phone seals at 26 MB/s (software AES) and that capped
+# phone->PC transfers at ~20 MB/s; with it, 143 MB/s (core/examples/seal_bench.rs, Snapdragon 8 Elite).
+[target.aarch64-linux-android]
+rustflags = ["--cfg", "aes_armv8"]

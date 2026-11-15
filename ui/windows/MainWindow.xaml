@@ -1,0 +1,148 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Window
+    x:Class="Drift.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:win2d="using:Microsoft.Graphics.Canvas.UI.Xaml"
+    Title="Drift">
+
+    <Grid x:Name="Root" Background="{StaticResource DriftBg}" AllowDrop="True" KeyboardAcceleratorPlacementMode="Hidden"
+          DragOver="OnDragOver" DragLeave="OnDragLeave" Drop="OnDrop">
+
+        <!-- Motion layer (Win2D). Never hit-testable: controls above always work. -->
+        <win2d:CanvasControl x:Name="StageCanvas" Draw="OnDraw" IsHitTestVisible="False" ClearColor="Transparent" />
+
+        <!-- Crisp text that rides on the stage. Positions are set per frame. -->
+        <Canvas x:Name="Over" IsHitTestVisible="False">
+            <TextBlock x:Name="Pct" FontFamily="{StaticResource DriftMono}" FontSize="13" CharacterSpacing="40"
+                       Foreground="{StaticResource DriftFg}" Opacity="0" />
+            <TextBlock x:Name="Peer" FontFamily="{StaticResource DriftText}" FontSize="12" FontWeight="Medium"
+                       Foreground="{StaticResource DriftGrey1}" Opacity="0" />
+        </Canvas>
+
+        <!-- Nearby devices (buttons over their drops). -->
+        <Canvas x:Name="Nodes">
+            <!-- Blitz: seven quick clicks on the ring during a transfer (no hint: an easter egg) -->
+            <Border x:Name="BlitzHit" Width="180" Height="180" Background="Transparent" Visibility="Collapsed"
+                    PointerPressed="OnBlitzTap" />
+        </Canvas>
+
+        <!-- Activity / Settings sheet. -->
+        <ScrollViewer x:Name="Sheet" Margin="0,48,0,44" Padding="18,4,18,8" Visibility="Collapsed"
+                      HorizontalScrollMode="Disabled" VerticalScrollBarVisibility="Auto">
+            <StackPanel x:Name="SheetBody" />
+        </ScrollViewer>
+
+        <!-- Title bar: back (off home), mark or screen name, live meta, Activity, Settings, window glyphs. -->
+        <Grid x:Name="Bar" Height="48" VerticalAlignment="Top" Padding="14,0,4.5,0" UseLayoutRounding="False">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <Border x:Name="DragRegion" Grid.ColumnSpan="3" Background="{StaticResource DriftClear}" />
+            <Button x:Name="BackButton" Style="{StaticResource Glyph}" Click="OnBack" Visibility="Collapsed" Margin="0,0,6,0"
+                    AutomationProperties.Name="Back">
+                <Path Data="M10,3 L5,8 L10,13" Stroke="{StaticResource DriftFg}" StrokeThickness="1.5"
+                      StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" Width="16" Height="16" />
+            </Button>
+            <TextBlock x:Name="Mark" Grid.Column="1" Text="drift" Margin="8,0,0,1" VerticalAlignment="Center"
+                       FontFamily="{StaticResource DriftDisplay}" FontSize="15" FontWeight="SemiBold" CharacterSpacing="-40"
+                       Foreground="{StaticResource DriftFg}" IsHitTestVisible="False" />
+            <!-- Blitz unlocked for this transfer: a small bolt beside the wordmark (positioned in code) -->
+            <Path x:Name="BlitzMark" Grid.Column="1" HorizontalAlignment="Left" VerticalAlignment="Center" Width="9" Height="13"
+                  Stretch="Uniform" Data="M6.2,0 L0.6,8 L4.6,8 L3.4,14 L9.4,5.4 L5.4,5.4 Z" Stroke="{StaticResource DriftFg}"
+                  StrokeThickness="1.2" StrokeLineJoin="Round" Visibility="Collapsed" IsHitTestVisible="False"
+                  RenderTransformOrigin="0.5,0.5">
+                <Path.RenderTransform><ScaleTransform x:Name="BlitzScale" /></Path.RenderTransform>
+            </Path>
+            <TextBlock x:Name="Crumb" Grid.Column="1" VerticalAlignment="Center" Margin="0,0,0,1" Visibility="Collapsed"
+                       FontFamily="{StaticResource DriftDisplay}" FontSize="15" FontWeight="SemiBold" CharacterSpacing="-30"
+                       Foreground="{StaticResource DriftFg}" IsHitTestVisible="False" />
+            <TextBlock x:Name="Meta" Grid.Column="2" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="12,0,6,0"
+                       FontFamily="{StaticResource DriftMono}" FontSize="10.5" FontWeight="Medium" CharacterSpacing="60"
+                       Foreground="{StaticResource DriftGrey1}" IsHitTestVisible="False" TextTrimming="CharacterEllipsis" />
+            <StackPanel x:Name="HomeIcons" Grid.Column="3" Orientation="Horizontal" Spacing="6">
+                <Button Style="{StaticResource Glyph}" Click="OnActivity" AutomationProperties.Name="Activity">
+                    <Path Data="M2,8 L5,8 L7,3 L9,13 L11,8 L14,8" Stroke="{StaticResource DriftGrey1}" StrokeThickness="1.4"
+                          StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" Width="16" Height="16" />
+                </Button>
+                <Button Style="{StaticResource Glyph}" Click="OnSettings" AutomationProperties.Name="Settings">
+                    <Grid Width="16" Height="16">
+                        <Ellipse Width="4.4" Height="4.4" Stroke="{StaticResource DriftGrey1}" StrokeThickness="1.4" />
+                        <Path Data="M8,1.5 L8,3.5 M8,12.5 L8,14.5 M1.5,8 L3.5,8 M12.5,8 L14.5,8 M3.4,3.4 L4.8,4.8 M11.2,11.2 L12.6,12.6 M3.4,12.6 L4.8,11.2 M11.2,4.8 L12.6,3.4"
+                              Stroke="{StaticResource DriftGrey1}" StrokeThickness="1.4" StrokeStartLineCap="Round" StrokeEndLineCap="Round" />
+                    </Grid>
+                </Button>
+            </StackPanel>
+            <StackPanel Grid.Column="4" Orientation="Horizontal" Spacing="-2.35" Margin="7.15,0,0,0">
+                <Button x:Name="MinButton" Style="{StaticResource WinGlyph}" Content="&#x2013;" Click="OnMinimize"
+                        AutomationProperties.Name="Minimize" />
+                <Button x:Name="CloseButton" Style="{StaticResource WinGlyph}" Content="&#x00D7;" Click="OnClose"
+                        AutomationProperties.Name="Close" />
+            </StackPanel>
+        </Grid>
+
+        <!-- Toast -->
+        <Border x:Name="ToastBox" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,54,0,0" Padding="11,0" Height="25"
+                CornerRadius="12.5" Background="{StaticResource DriftFg}" Opacity="0" IsHitTestVisible="False">
+            <TextBlock x:Name="ToastText" FontFamily="{StaticResource DriftMono}" FontSize="11" FontWeight="Medium" VerticalAlignment="Center"
+                       CharacterSpacing="40" Foreground="{StaticResource DriftBg}" MaxWidth="322" TextTrimming="CharacterEllipsis" />
+        </Border>
+
+        <!-- Notice card (prototype .notice): a lasting problem, until dismissed. -->
+        <Grid x:Name="NoticeCard" VerticalAlignment="Top" Margin="18,52,18,0" Padding="12,11,10,11" ColumnSpacing="11"
+              CornerRadius="14" BorderThickness="1" BorderBrush="{StaticResource DriftGrey2}" Background="{StaticResource DriftBg}"
+              Visibility="Collapsed">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="22" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="22" />
+            </Grid.ColumnDefinitions>
+            <Canvas Width="22" Height="22" VerticalAlignment="Center">
+                <!-- the ring draws on from the top (dash offset), the stem follows, the dot drops in -->
+                <Ellipse x:Name="NoticeRing" Width="20" Height="20" Canvas.Left="1" Canvas.Top="1" Stroke="{StaticResource DriftFg}" StrokeThickness="1.5"
+                         StrokeDashArray="42,42" StrokeDashOffset="42" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeDashCap="Round"
+                         RenderTransformOrigin="0.5,0.5">
+                    <Ellipse.RenderTransform><RotateTransform Angle="-90" /></Ellipse.RenderTransform>
+                </Ellipse>
+                <Line x:Name="NoticeStem" X1="11" Y1="10" X2="11" Y2="15.5" Stroke="{StaticResource DriftFg}" StrokeThickness="1.7"
+                      StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeDashCap="Flat" StrokeDashArray="3.3,3.3" StrokeDashOffset="3.3" />
+                <Ellipse x:Name="NoticeDot" Width="2.5" Height="2.5" Canvas.Left="9.75" Canvas.Top="5.35" Fill="{StaticResource DriftFg}" />
+            </Canvas>
+            <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="1">
+                <TextBlock x:Name="NoticeTitle" FontFamily="{StaticResource DriftText}" FontSize="12.5" FontWeight="Medium"
+                           Foreground="{StaticResource DriftFg}" TextWrapping="Wrap" />
+                <TextBlock x:Name="NoticeDetail" FontFamily="{StaticResource DriftText}" FontSize="11.5"
+                           Foreground="{StaticResource DriftGrey1}" TextWrapping="Wrap" />
+                <!-- a fix, when there is one (prototype .notice .act) -->
+                <Button x:Name="NoticeAction" Style="{StaticResource Bare}" Padding="0,3,0,0" HorizontalAlignment="Left"
+                        Visibility="Collapsed" Click="OnNoticeAction" CornerRadius="4">
+                    <TextBlock x:Name="NoticeActionText" FontFamily="{StaticResource DriftText}" FontSize="12" FontWeight="Medium"
+                               Foreground="{StaticResource DriftFg}" TextDecorations="Underline" />
+                </Button>
+            </StackPanel>
+            <Button Grid.Column="2" Style="{StaticResource WinGlyph}" Content="&#x00D7;" Click="OnNoticeDismiss"
+                    AutomationProperties.Name="Dismiss" VerticalAlignment="Center" />
+        </Grid>
+
+        <!-- The dock of running transfers: 18px sides, 128px from the bottom (clear of the headline). -->
+        <StackPanel x:Name="Dock" Orientation="Horizontal" Spacing="6" VerticalAlignment="Bottom" Margin="18,0,18,128" />
+
+        <!-- Footer (prototype: 26px sides, 24px bottom, 3px gaps; h3 21/1.2, p 13/1.5, actions +12px, 37px pills). -->
+        <StackPanel x:Name="Footer" VerticalAlignment="Bottom" Padding="26,0,26,24" Spacing="3">
+            <TextBlock x:Name="Headline" FontFamily="{StaticResource DriftDisplay}" FontSize="21" FontWeight="Medium"
+                       CharacterSpacing="-35" LineHeight="25.2" LineStackingStrategy="BlockLineHeight"
+                       TextTrimming="CharacterEllipsis" Foreground="{StaticResource DriftFg}" />
+            <TextBlock x:Name="Subline" FontFamily="{StaticResource DriftText}" FontSize="13" LineHeight="19.5"
+                       LineStackingStrategy="BlockLineHeight" TextTrimming="CharacterEllipsis" Foreground="{StaticResource DriftGrey1}" />
+            <StackPanel x:Name="Actions" Orientation="Horizontal" Spacing="8" Margin="0,12,0,0" MinHeight="37" />
+        </StackPanel>
+
+        <!-- Files dragged over the window: a 2px ink outline (prototype .win.dragover). -->
+        <Border x:Name="DragRing" BorderThickness="2" BorderBrush="{StaticResource DriftFg}" CornerRadius="8"
+                IsHitTestVisible="False" Visibility="Collapsed" />
+    </Grid>
+</Window>

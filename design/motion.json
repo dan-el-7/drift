@@ -1,0 +1,24 @@
+{
+  "_doc": "Drift motion spec. One source of truth for Windows (Composition SpringNaturalMotion: damping ratio + period) and Linux (AdwSpringAnimation: damping ratio + mass + stiffness). Springs are given as damping ratio (1 = critically damped, <1 = bouncy) and response in ms (the undamped period). drift-design converts. Animate transforms and opacity only.",
+  "springs": {
+    "settle":   { "damping_ratio": 1.0,  "response_ms": 420, "use": "state changes: idle -> found -> PIN -> transferring -> done" },
+    "snappy":   { "damping_ratio": 0.86, "response_ms": 260, "use": "small UI reactions: hover, press, toggles" },
+    "drop":     { "damping_ratio": 0.62, "response_ms": 520, "use": "a received file dropping into place (soft single overshoot)" },
+    "breathe":  { "damping_ratio": 1.0,  "response_ms": 2400, "use": "idle dot breathing, looped back and forth" },
+    "puff":     { "damping_ratio": 0.72, "response_ms": 640, "use": "done: the ball puffs out edge to edge" }
+  },
+  "loops": {
+    "sonar_ring_ms": 2800,
+    "sonar_ring_count": 3
+  },
+  "reduced_motion": {
+    "_doc": "When the OS asks for reduced motion: no springs, no loops; crossfade only.",
+    "crossfade_ms": 160
+  },
+  "throughput_visual": {
+    "_doc": "Particle/dash speed along the phone->PC line scales with real throughput (log scale), clamped.",
+    "min_px_per_s": 24,
+    "max_px_per_s": 640,
+    "mbps_at_max": 120
+  }
+}

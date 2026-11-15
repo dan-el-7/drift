@@ -1,0 +1,9 @@
+[workspace]
+resolver = "2"
+members = ["app", "cli", "core", "design", "ffi", "net", "platform-win"]
+
+# Phone builds while developing: optimised (the crypto is slow unoptimised), quick to rebuild.
+[profile.android-dev]
+inherits = "release"
+incremental = true
+codegen-units = 16

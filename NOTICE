@@ -1,0 +1,13 @@
+Drift
+Copyright 2026 dan-el-7
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This product includes Protocol Buffer definitions (proto/) from Google's
+Nearby Connections (https://github.com/google/nearby) and UKEY2
+(https://github.com/google/ukey2) projects, Copyright Google LLC,
+licensed under the Apache License, Version 2.0.
+
+The Geist and Geist Mono fonts (ui/windows/Assets/Fonts, android/app/src/main/res/font)
+are Copyright Vercel, licensed under the SIL Open Font License 1.1
+(ui/windows/Assets/Fonts/OFL.txt).

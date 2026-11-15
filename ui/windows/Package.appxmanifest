@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Drift as an MSIX (milestone 6). Build with -p:DriftPackage=true (see ui/windows/package.ps1). -->
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:uap5="http://schemas.microsoft.com/appx/manifest/uap/windows10/5"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
+  xmlns:com="http://schemas.microsoft.com/appx/manifest/com/windows10"
+  IgnorableNamespaces="uap uap5 rescap desktop com">
+
+  <!-- Publisher must match the signing certificate's subject. -->
+  <Identity Name="Drift" Publisher="CN=Drift Dev" Version="0.1.0.0" ProcessorArchitecture="x64" />
+
+  <Properties>
+    <DisplayName>Drift</DisplayName>
+    <PublisherDisplayName>Drift</PublisherDisplayName>
+    <Logo>Assets\Tiles\StoreLogo.png</Logo>
+  </Properties>
+
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.19041.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="x-generate" />
+  </Resources>
+
+  <Applications>
+    <Application Id="App" Executable="$targetnametoken$.exe" EntryPoint="$targetentrypoint$">
+      <uap:VisualElements DisplayName="Drift" Description="Quick Share for Windows, over a direct link"
+                          BackgroundColor="transparent"
+                          Square150x150Logo="Assets\Tiles\Square150x150Logo.png"
+                          Square44x44Logo="Assets\Tiles\Square44x44Logo.png">
+        <uap:DefaultTile Wide310x150Logo="Assets\Tiles\Wide310x150Logo.png" />
+      </uap:VisualElements>
+      <Extensions>
+        <!-- Settings > Open at sign-in (off until you turn it on); starts in the tray. -->
+        <uap5:Extension Category="windows.startupTask">
+          <uap5:StartupTask TaskId="DriftAtSignIn" Enabled="false" DisplayName="Drift" />
+        </uap5:Extension>
+        <!-- Notification buttons (Accept / Decline / Open) come back through this COM server. -->
+        <desktop:Extension Category="windows.toastNotificationActivation">
+          <desktop:ToastNotificationActivation ToastActivatorCLSID="6F1D3C3E-6E7B-4C1A-9C1B-0D5E2B7A9F41" />
+        </desktop:Extension>
+        <com:Extension Category="windows.comServer">
+          <com:ComServer>
+            <com:ExeServer Executable="Drift.exe" DisplayName="Drift" Arguments="----AppNotificationActivated:">
+              <com:Class Id="6F1D3C3E-6E7B-4C1A-9C1B-0D5E2B7A9F41" />
+            </com:ExeServer>
+          </com:ComServer>
+        </com:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <Capability Name="internetClient" />
+    <Capability Name="internetClientServer" />
+    <Capability Name="privateNetworkClientServer" />
+    <rescap:Capability Name="runFullTrust" />
+    <DeviceCapability Name="bluetooth" />
+    <DeviceCapability Name="radios" />
+    <DeviceCapability Name="wiFiControl" />
+  </Capabilities>
+</Package>

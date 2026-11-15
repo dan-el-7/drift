@@ -1,0 +1,950 @@
+<title>Drift Motion Studies</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one live Drift window (a clickable prototype of the whole app) on the left; on the right
+   the simulator (make a phone send, drop files), the look switch, and the route map that documents
+   every screen and how you leave it. One column on phones. The page itself is a single dark look;
+   the window has its own light/dark theme. */
+:root {
+  --page: #000;
+  --page-fg: #f2f2f2;
+  --page-dim: #8a8a8a;
+  --page-line: #242424;
+  --ui: "Geist", "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "Geist Mono", ui-monospace, "SF Mono", Consolas, monospace;
+  color-scheme: dark;
+}
+html, body { background: var(--page); color: var(--page-fg); }
+[hidden] { display: none !important; }
+body {
+  font: 400 14px/1.5 var(--ui);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 40px 64px;
+  -webkit-font-smoothing: antialiased;
+}
+.wrap { max-width: 1120px; margin: 0 auto; display: grid; gap: 28px; }
+header { display: grid; gap: 10px; max-width: 70ch; }
+header h1 { margin: 0; font: 600 32px/1.05 var(--ui); letter-spacing: -0.04em; text-wrap: balance; }
+header p { margin: 0; color: var(--page-dim); }
+.main { display: grid; grid-template-columns: minmax(0, 380px) minmax(0, 1fr); gap: 48px; align-items: start; }
+@media (max-width: 860px) { .main { grid-template-columns: minmax(0, 1fr); } }
+.side { display: grid; gap: 28px; min-width: 0; }
+.group { display: grid; gap: 10px; }
+.group h2 { margin: 0; font: 500 11px/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--page-dim); }
+.row { display: flex; flex-wrap: wrap; gap: 8px; }
+.tbtn {
+  font: 500 12px/1 var(--mono); letter-spacing: 0.02em; color: var(--page-dim);
+  background: transparent; border: 1px solid var(--page-line); border-radius: 999px;
+  padding: 9px 13px; cursor: pointer; transition: color .15s, border-color .15s, background .15s;
+}
+.tbtn:hover { color: var(--page-fg); border-color: #555; }
+.tbtn[aria-pressed="true"] { color: #000; background: var(--page-fg); border-color: var(--page-fg); }
+.tbtn:focus-visible { outline: 2px solid var(--page-fg); outline-offset: 2px; }
+.routes { display: grid; gap: 0; border-top: 1px solid var(--page-line); }
+.routes div { display: grid; grid-template-columns: 9.5rem minmax(0, 1fr); gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--page-line); font-size: 13px; }
+.routes b { font: 500 12px/1.5 var(--mono); color: var(--page-fg); }
+.routes span { color: var(--page-dim); min-width: 0; }
+.routes div.here b::before { content: "● "; }
+.hint { color: var(--page-dim); font-size: 13px; margin: 0; }
+kbd { font: 500 11px var(--mono); border: 1px solid var(--page-line); border-radius: 4px; padding: 1px 5px; }
+
+/* ---------------------------------------------------------------- the Drift window */
+.holder { width: 100%; max-width: 380px; aspect-ratio: 380 / 520; position: relative; }
+.win {
+  --ink: #fff; --paper: #000; --g1: #8a8a8a; --g2: #2a2a2a;
+  position: absolute; left: 0; top: 0; width: 380px; height: 520px; transform-origin: 0 0;
+  background: var(--paper); color: var(--ink); border-radius: 14px; overflow: hidden;
+  box-shadow: 0 0 0 1px #262626, 0 30px 80px -20px rgba(255,255,255,.06);
+  font-family: var(--ui); user-select: none;
+}
+.win.light { --ink: #000; --paper: #fff; --g1: #757575; --g2: #d5d5d5; box-shadow: 0 0 0 1px #d5d5d5; }
+.win.dragover { box-shadow: 0 0 0 2px var(--ink); }
+.win canvas { position: absolute; inset: 0; width: 380px; height: 520px; }
+.win canvas.pinfx, .win canvas.pentrail { filter: none !important; pointer-events: none; } /* never thresholded or inverted */
+.win.ink canvas { filter: contrast(12); } /* 12 not 32: same 50% cut, ~1px anti-aliased edge */
+.win.ink.light canvas { filter: contrast(12) invert(1); }
+.win button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+.win button:focus-visible { outline: 1.5px solid var(--ink); outline-offset: 2px; border-radius: 8px; }
+
+.bar { position: absolute; left: 0; right: 0; top: 0; height: 48px; display: flex; align-items: center; padding: 0 12px 0 14px; gap: 6px; z-index: 5; }
+.bar .back { width: 30px; height: 30px; border-radius: 15px; display: grid; place-items: center; color: var(--ink); }
+.bar .back:hover, .bar .icon:hover { background: color-mix(in srgb, var(--ink) 10%, transparent); }
+.bar .mark { font: 600 15px/1 var(--ui); letter-spacing: -0.04em; padding-left: 8px; }
+.bar .crumb { font: 600 15px/1 var(--ui); letter-spacing: -0.03em; }
+.bar .meta { margin-left: auto; font: 500 10.5px/1 var(--mono); letter-spacing: 0.06em; color: var(--g1); text-transform: uppercase; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.bar .icon { width: 30px; height: 30px; border-radius: 15px; display: grid; place-items: center; color: var(--g1); }
+.bar .glyphs { display: flex; gap: 12px; color: var(--g1); font-size: 14px; margin-left: 8px; }
+.bar svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+
+.pin, .pct { position: absolute; left: 0; right: 0; top: 48px; height: 304px; display: flex; align-items: center; justify-content: center; pointer-events: none; font-variant-numeric: tabular-nums; }
+.pin span { display: inline-block; text-align: center; font: 600 88px/1 var(--ui); letter-spacing: -0.05em; width: 56px; }
+.pct { font: 500 13px/1 var(--mono); letter-spacing: 0.04em; opacity: 0; }
+.peer { position: absolute; font: 500 12px/1 var(--ui); color: var(--g1); white-space: nowrap; pointer-events: none; opacity: 0; }
+.nodes button { position: absolute; width: 120px; height: 78px; display: grid; align-content: end; justify-items: center; gap: 2px; padding-bottom: 4px; border-radius: 12px; opacity: 0; }
+.nodes button span { font: 500 12px/1.2 var(--ui); color: var(--ink); }
+.nodes button small { font: 400 10.5px/1.2 var(--mono); color: var(--g1); letter-spacing: .04em; text-transform: uppercase; }
+.nodes button:hover span { text-decoration: underline; text-underline-offset: 3px; }
+
+.panel { position: absolute; left: 0; right: 0; top: 48px; bottom: 150px; overflow-y: auto; padding: 8px 18px; opacity: 0; transform: translateY(14px); pointer-events: none; transition: opacity .2s; z-index: 3; }
+.panel.show { opacity: 1; transform: none; pointer-events: auto; transition: opacity .25s, transform 520ms var(--settle-ease, cubic-bezier(.2,.8,.2,1)); }
+.list { display: grid; }
+.item { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 11px 8px; border-bottom: 1px solid var(--g2); text-align: left; width: 100%; border-radius: 0; }
+.item:hover { background: color-mix(in srgb, var(--ink) 6%, transparent); }
+.item .t { font: 500 13px/1.3 var(--ui); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.item .s { font: 400 11.5px/1.35 var(--ui); color: var(--g1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+.item .r { font: 500 11px/1 var(--mono); color: var(--g1); letter-spacing: .04em; text-transform: uppercase; }
+.check { width: 16px; height: 16px; border: 1px solid var(--g1); border-radius: 4px; display: grid; place-items: center; }
+.check.on { background: var(--ink); border-color: var(--ink); }
+.check.on::after { content: ""; width: 7px; height: 4px; border-left: 1.5px solid var(--paper); border-bottom: 1.5px solid var(--paper); transform: rotate(-45deg) translate(1px, -1px); }
+.set { display: grid; gap: 8px; padding: 14px 8px; border-bottom: 1px solid var(--g2); }
+.set label, .set .k { font: 500 13px/1.2 var(--ui); }
+.set .v { font: 400 12px/1.4 var(--ui); color: var(--g1); }
+.seg { display: flex; border: 1px solid var(--g2); border-radius: 999px; padding: 2px; gap: 2px; width: max-content; max-width: 100%; }
+.seg button { font: 500 12px/1 var(--ui); padding: 7px 12px; border-radius: 999px; color: var(--g1); }
+.seg button[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
+.switch { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.tog { width: 34px; height: 20px; border-radius: 10px; background: var(--g2); position: relative; flex: none; }
+.tog::after { content: ""; position: absolute; left: 3px; top: 3px; width: 14px; height: 14px; border-radius: 7px; background: var(--g1); transition: transform .25s var(--settle-ease, ease), background .2s; }
+.tog[aria-checked="true"] { background: var(--ink); }
+.tog[aria-checked="true"]::after { transform: translateX(14px); background: var(--paper); }
+.set input { font: 500 13px var(--ui); color: var(--ink); background: transparent; border: 0; border-bottom: 1px solid var(--g2); padding: 4px 0; outline: none; width: 100%; }
+.set input:focus { border-bottom-color: var(--ink); }
+
+.dock { position: absolute; left: 18px; right: 18px; bottom: 128px; display: flex; flex-wrap: wrap; gap: 6px; z-index: 4; }
+.chip { display: inline-flex; align-items: center; gap: 7px; height: 28px; padding: 0 11px 0 8px; border-radius: 999px; border: 1px solid var(--g2); background: var(--paper); font: 500 11.5px/1 var(--ui); max-width: 100%; animation: chip 420ms var(--settle-ease, ease) both; }
+.chip:hover { border-color: var(--g1); }
+.chip .txt { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 190px; }
+.chip .num { font: 500 10.5px/1 var(--mono); color: var(--g1); font-variant-numeric: tabular-nums; }
+.chip svg { width: 14px; height: 14px; flex: none; }
+.chip .pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--ink); animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 50% { transform: scale(.55); opacity: .5; } }
+@keyframes chip { from { transform: translateY(6px) scale(.96); opacity: 0; } }
+
+.toast { position: absolute; left: 50%; top: 54px; transform: translateX(-50%); font: 500 11px/1 var(--mono); letter-spacing: .04em; text-transform: uppercase; color: var(--paper); background: var(--ink); padding: 7px 11px; border-radius: 999px; opacity: 0; transition: opacity .2s; white-space: nowrap; z-index: 6; pointer-events: none; }
+.toast.show { opacity: 1; }
+/* Notice card: problems that last (Google's Quick Share running, firewall, Bluetooth off) until you
+   dismiss them or they clear. Transient failures keep the toast. */
+.notice { position: absolute; left: 18px; right: 18px; top: 52px; display: grid; grid-template-columns: 22px minmax(0, 1fr) 22px; gap: 11px; align-items: center;
+  padding: 11px 10px 11px 12px; border: 1px solid var(--g2); border-radius: 14px; background: var(--paper); z-index: 6;
+  opacity: 0; transform: translateY(-8px) scale(.98); pointer-events: none; transition: opacity .2s, transform .2s; }
+.notice.show { opacity: 1; transform: none; pointer-events: auto; transition: opacity .25s, transform 520ms var(--settle-ease, cubic-bezier(.2,.8,.2,1)); }
+.notice svg.i { width: 22px; height: 22px; overflow: visible; }
+.notice svg.i circle.ring { fill: none; stroke: var(--ink); stroke-width: 1.5; stroke-linecap: round; stroke-dasharray: 63; stroke-dashoffset: 63; transform: rotate(-90deg); transform-origin: 11px 11px; }
+.notice svg.i .stem { stroke: var(--ink); stroke-width: 1.7; stroke-linecap: round; stroke-dasharray: 6; stroke-dashoffset: 6; }
+.notice svg.i .dot { fill: var(--ink); transform-origin: 11px 6.6px; transform: translateY(-6px) scale(0); }
+.notice.show svg.i circle.ring { animation: ringOn 620ms var(--settle-ease, ease) 60ms forwards; }
+.notice.show svg.i .stem { animation: stemOn 300ms ease-out 420ms forwards; }
+.notice.show svg.i .dot { animation: dotDrop 560ms var(--drop-ease, cubic-bezier(.3,1.6,.5,1)) 560ms forwards, dotBreathe 2.4s ease-in-out 1.2s infinite; }
+@keyframes ringOn { to { stroke-dashoffset: 0; } }
+@keyframes stemOn { to { stroke-dashoffset: 0; } }
+@keyframes dotDrop { to { transform: none; } }
+@keyframes dotBreathe { 50% { transform: scale(1.35); } }
+.notice .txt { font: 500 12.5px/1.35 var(--ui); color: var(--ink); min-width: 0; }
+.notice .txt small { display: block; font: 400 11.5px/1.35 var(--ui); color: var(--g1); margin-top: 1px; }
+.notice .act { display: block; margin-top: 4px; font: 500 12px/1.2 var(--ui); color: var(--ink); text-decoration: underline; text-underline-offset: 2px; }
+.notice .x { width: 22px; height: 22px; border-radius: 11px; display: grid; place-items: center; color: var(--g1); font-size: 14px; line-height: 1; }
+.notice .x:hover { background: color-mix(in srgb, var(--ink) 10%, transparent); color: var(--ink); }
+@media (prefers-reduced-motion: reduce) { .notice, .notice.show { transition: none; } .notice.show svg.i * { animation: none !important; stroke-dashoffset: 0 !important; transform: none !important; } }
+
+footer { position: absolute; left: 0; right: 0; bottom: 0; padding: 0 26px 24px; display: grid; gap: 3px; z-index: 4; }
+footer h3 { margin: 0; font: 500 21px/1.2 var(--ui); letter-spacing: -0.035em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+footer p { margin: 0; font-size: 13px; color: var(--g1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; min-height: 1.5em; }
+.actions { display: flex; gap: 8px; margin-top: 12px; min-height: 36px; }
+.pill { font: 500 13px/1 var(--ui) !important; padding: 11px 18px !important; border-radius: 999px !important; border: 1px solid var(--g1) !important; color: var(--ink) !important; transition: transform .12s; }
+.pill:hover { border-color: var(--ink) !important; }
+.pill:active { transform: scale(.96); }
+.pill.solid { background: var(--ink) !important; color: var(--paper) !important; border-color: var(--ink) !important; }
+.pill[disabled] { opacity: .35; pointer-events: none; }
+/* Activity and Settings: the title bar names the screen, so the footer is one caption, bottom left. */
+.win.sheet .panel { bottom: 44px; }
+.win.sheet footer h3, .win.sheet .actions { display: none; }
+.win.sheet footer p { font-size: 11.5px; }
+.win.sheet footer { padding-bottom: 18px; }
+.win .fresh { animation: rise 520ms var(--settle-ease, cubic-bezier(.2,.8,.2,1)) both; }
+@keyframes rise { from { transform: translateY(7px); opacity: 0; } to { transform: none; opacity: 1; } }
+.win.inv footer h3, .win.inv .bar .mark, .win.inv .bar .back { color: var(--paper); }
+.win.inv footer p, .win.inv .bar .meta, .win.inv .bar .glyphs, .win.inv .bar .icon { color: var(--g2); }
+.win.inv .pill { color: var(--paper) !important; border-color: var(--paper) !important; }
+.win.inv .pill.solid { background: var(--paper) !important; color: var(--ink) !important; }
+/* Themes that change type */
+.win.field footer h3 { font: 500 13px/1.3 var(--mono); letter-spacing: 0.02em; text-transform: uppercase; }
+.win.field footer p { font: 400 11.5px/1.5 var(--mono); letter-spacing: 0.02em; text-transform: uppercase; }
+.win.field .pill { font: 500 11.5px/1 var(--mono) !important; letter-spacing: .04em; text-transform: uppercase; border-radius: 3px !important; padding: 11px 14px !important; }
+.win.mono footer h3 { font: 600 17px/1.25 var(--ui); letter-spacing: -0.02em; }
+@media (prefers-reduced-motion: reduce) { .win .fresh, .chip, .panel.show { animation: none; transition: none; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>Drift motion studies</h1>
+    <p>A clickable prototype of the whole window. Ink is the default look; Monolith and Field are optional themes. Make the phone send something, drop files on the window, go back and forth: transfers keep running in the dock while you do other things.</p>
+  </header>
+
+  <div class="main">
+    <div class="holder"><div class="win ink" id="win" tabindex="-1" aria-label="Drift window prototype"></div></div>
+
+    <div class="side">
+      <div class="group">
+        <h2>Simulate</h2>
+        <div class="row">
+          <button class="tbtn" id="simPhoto">Phone sends a photo</button>
+          <button class="tbtn" id="simAlbum">Phone sends 24 photos</button>
+          <button class="tbtn" id="simDrop">Drop 2 files on the window</button>
+          <button class="tbtn" id="simWarn">Google Quick Share is running</button>
+        </div>
+        <p class="hint">You can also drop real files onto the window. Outgoing sends are accepted by the "phone" after about two seconds. <kbd>Esc</kbd> goes back.</p>
+      </div>
+      <div class="group">
+        <h2>Look</h2>
+        <div class="row" id="looks">
+          <button class="tbtn" data-look="ink" aria-pressed="true">Ink (default)</button>
+          <button class="tbtn" data-look="mono" aria-pressed="false">Monolith</button>
+          <button class="tbtn" data-look="field" aria-pressed="false">Field</button>
+        </div>
+        <div class="row">
+          <button class="tbtn" id="light" aria-pressed="false">Light theme</button>
+          <button class="tbtn" id="slow" aria-pressed="false">0.4× speed</button>
+          <button class="tbtn" id="reduced" aria-pressed="false">Reduced motion</button>
+        </div>
+      </div>
+      <div class="group">
+        <h2>Routes</h2>
+        <div class="routes" id="routes">
+          <div data-r="home"><b>Home</b><span>Your visibility, the dock of running transfers, Send files. Activity and Settings sit in the title bar. Drop files anywhere to send.</span></div>
+          <div data-r="pick"><b>Send · files</b><span>Pick what to send (the system picker in the real app). Back or <kbd>Esc</kbd> returns home.</span></div>
+          <div data-r="devices"><b>Send · device</b><span>Nearby devices surface out of the centre. Tap one to send. Back returns to the files.</span></div>
+          <div data-r="waiting"><b>Waiting</b><span>The code to check and "accept on the phone". Hide keeps waiting in the dock; Cancel stops the send.</span></div>
+          <div data-r="request"><b>Request</b><span>Someone wants to send: code, files, Decline or Accept. Back leaves it pending in the dock, so you can answer later.</span></div>
+          <div data-r="transfer"><b>Transfer</b><span>The self-eating ring, size and live speed, link in the title bar. Hide (or Back) sends it to the dock and it keeps going.</span></div>
+          <div data-r="done"><b>Done</b><span>The puff. Open or Show in folder; returns home on its own after a few seconds.</span></div>
+          <div data-r="activity"><b>Activity</b><span>Everything running and finished. Tap a running one to open its ring again.</span></div>
+          <div data-r="settings"><b>Settings</b><span>Name, visibility, save location, look, link details (speed and link type are always shown; this adds the technical details).</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  // ================================================================ springs (design/motion.json)
+  const SPR = {
+    settle: { z: 1.0, r: 420 }, snappy: { z: 0.86, r: 260 }, drop: { z: 0.62, r: 520 },
+    breathe: { z: 1.0, r: 2400 }, puff: { z: 0.72, r: 640 },
+  };
+  let reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let slow = false;
+  const k = () => (slow ? 0.4 : 1);
+  class Spring {
+    constructor(x, cfg = 'settle') { this.x = x; this.v = 0; this.to = x; this.cfg = SPR[cfg]; }
+    go(to, cfg) { this.to = to; if (cfg) this.cfg = SPR[cfg]; return this; }
+    snap(x) { this.x = this.to = x; this.v = 0; return this; }
+    step(dt) {
+      if (reduced) { this.x = this.to; this.v = 0; return this.x; }
+      const w = 2 * Math.PI / (this.cfg.r / 1000), z = this.cfg.z;
+      const n = Math.max(1, Math.ceil(dt / 0.004)), h = dt / n;
+      for (let i = 0; i < n; i++) { const a = -w * w * (this.x - this.to) - 2 * z * w * this.v; this.v += a * h; this.x += this.v * h; }
+      return this.x;
+    }
+  }
+  (() => { // the settle spring as a CSS linear() easing for DOM transitions
+    const s = new Spring(0, 'settle').go(1); const pts = [];
+    for (let i = 0; i <= 40; i++) { pts.push(s.x.toFixed(4)); s.step(0.52 / 40); }
+    pts[40] = '1';
+    if (CSS.supports('animation-timing-function', 'linear(0, 1)')) document.documentElement.style.setProperty('--settle-ease', `linear(${pts.join(',')})`);
+  })();
+  const pxPerSec = mbps => 24 + (640 - 24) * Math.min(1, Math.log1p(mbps) / Math.log1p(120));
+  const clamp = (v, a = 0, b = 1) => Math.max(a, Math.min(b, v));
+
+  // ================================================================ the window DOM
+  const win = document.getElementById('win');
+  win.innerHTML = `
+    <canvas></canvas>
+    <canvas class="pinfx"></canvas>
+    <canvas class="pentrail"></canvas>
+    <div class="bar">
+      <button class="back" aria-label="Back" hidden><svg viewBox="0 0 16 16"><path d="M10 3 5 8l5 5"/></svg></button>
+      <span class="mark">drift</span><span class="crumb"></span>
+      <span class="meta"></span>
+      <button class="icon" data-go="activity" aria-label="Activity"><svg viewBox="0 0 16 16"><path d="M2 8h3l2-5 2 10 2-5h3"/></svg></button>
+      <button class="icon" data-go="settings" aria-label="Settings"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4"/></svg></button>
+      <span class="glyphs" aria-hidden="true"><span>–</span><span>×</span></span>
+    </div>
+    <div class="pin" aria-hidden="true"></div>
+    <div class="pct" aria-hidden="true"></div>
+    <div class="peer" aria-hidden="true"></div>
+    <div class="nodes"></div>
+    <div class="panel"></div>
+    <div class="toast" role="status"></div>
+    <div class="notice" role="alert" aria-live="polite">
+      <svg class="i" viewBox="0 0 22 22" aria-hidden="true"><circle class="ring" cx="11" cy="11" r="10" /><line class="stem" x1="11" y1="10" x2="11" y2="15.5" /><circle class="dot" cx="11" cy="6.6" r="1.25" /></svg>
+      <div class="txt"></div>
+      <button class="x" aria-label="Dismiss">×</button>
+    </div>
+    <div class="dock"></div>
+    <footer><h3></h3><p></p><div class="actions"></div></footer>`;
+  const $ = s => win.querySelector(s);
+  const UI = {
+    canvas: $('canvas'), back: $('.back'), mark: $('.mark'), crumb: $('.crumb'), meta: $('.meta'), icons: [...win.querySelectorAll('.icon')],
+    pin: $('.pin'), pct: $('.pct'), peer: $('.peer'), nodes: $('.nodes'), panel: $('.panel'), toast: $('.toast'), notice: $('.notice'), dock: $('.dock'),
+    footer: $('footer'), h: $('footer h3'), p: $('footer p'), actions: $('.actions'),
+  };
+  const dpr = Math.min(2, devicePixelRatio || 1);
+  UI.canvas.width = 380 * dpr; UI.canvas.height = 520 * dpr;
+  const ctx = UI.canvas.getContext('2d'); ctx.scale(dpr, dpr);
+  const fxCanvas = win.querySelector('canvas.pinfx');
+  fxCanvas.width = 380 * dpr; fxCanvas.height = 520 * dpr;
+  const fx = fxCanvas.getContext('2d'); fx.scale(dpr, dpr);
+  const trailCanvas = win.querySelector('canvas.pentrail');
+  trailCanvas.width = 380 * dpr; trailCanvas.height = 520 * dpr;
+  const tr = trailCanvas.getContext('2d'); tr.scale(dpr, dpr);
+  let C = {};
+  const readColors = () => { const cs = getComputedStyle(win); C = { ink: cs.getPropertyValue('--ink').trim(), paper: cs.getPropertyValue('--paper').trim(), g1: cs.getPropertyValue('--g1').trim(), g2: cs.getPropertyValue('--g2').trim() }; };
+  readColors();
+  function fit() { win.style.transform = `scale(${Math.min(1, win.parentElement.clientWidth / 380)})`; }
+  addEventListener('resize', fit); fit();
+
+  // ================================================================ the stage (motion layer)
+  // One pose per screen; each look draws the same springs its own way.
+  const cx = 190, cy = 200, R = 84, Rb = 26;
+  const ST = {
+    mode: 'idle', pin: null, pinStart: 0, rate: 0, devices: [], timers: [],
+    s: {
+      sonar: new Spring(1), core: new Spring(1), peer: new Spring(0), peerY: new Spring(-40, 'drop'),
+      ring: new Spring(0), ringS: new Spring(0.6), dial: new Spring(0), p: new Spring(0),
+      puff: new Spring(0, 'puff'), fill: new Spring(0), digits: new Spring(0), dim: new Spring(1),
+    },
+    nodes: [], // {id, name, kind, tx, ty, a, k}
+  };
+  const ANG = [-90, 25, 155, -25, 205];
+  function pose(mode, o = {}) {
+    const s = ST.s, prev = ST.mode;
+    ST.mode = mode;
+    ST.timers.forEach(clearTimeout); ST.timers = [];
+    s.dim.go(o.dim ? 0.14 : 1);
+    s.sonar.go({ idle: 1, devices: 0.5 }[mode] ?? 0);
+    s.core.go(mode === 'idle' || mode === 'devices' ? 1 : 0);
+    const docked = mode === 'pin' || mode === 'ring';
+    if (docked && s.peer.x < 0.05) s.peerY.snap(-30);
+    s.peer.go(docked ? 1 : 0);
+    s.peerY.go(docked ? cy - 146 : -40, 'drop');
+    ST.peerName = o.peer || ST.peerName;
+    s.ring.go(mode === 'ring' ? 1 : 0); s.ringS.go(mode === 'ring' ? 1 : 0.6); s.dial.go(mode === 'ring' ? 1 : 0);
+    if (mode === 'ring' && prev !== 'ring') s.p.snap(o.p ?? 0);
+    s.digits.go(mode === 'pin' ? 1 : 0, 'snappy');
+    if (mode === 'pin') { if (ST.pin !== o.pin) { ST.pin = o.pin; ST.pinStart = performance.now(); buildPinCells(o.pin); domPin(o.pin); } }
+    else { ST.pin = null; UI.pin.innerHTML = ''; }
+    if (mode === 'done') { s.p.go(1, 'snappy'); s.puff.snap(Rb).go(Math.hypot(380, 520) * 0.68, 'puff'); s.fill.go(1); win.classList.remove('inv'); ST.timers.push(setTimeout(() => win.classList.add('inv'), reduced ? 0 : 150 / k())); }
+    else { s.puff.go(0, 'settle'); s.fill.go(0); win.classList.remove('inv'); }
+    if (mode !== 'devices') ST.nodes.forEach(n => { n.a.go(0); n.k.go(0, 'settle'); });
+  }
+  function showDevices(list) {
+    list.forEach(d => {
+      let n = ST.nodes.find(n => n.id === d.id);
+      if (!n) {
+        const i = ST.nodes.length % ANG.length, a = ANG[i] * Math.PI / 180;
+        n = { ...d, tx: cx + Math.cos(a) * 112, ty: cy + Math.sin(a) * 112, a: new Spring(0), k: new Spring(0, 'drop') };
+        ST.nodes.push(n);
+      }
+      n.a.go(1); n.k.go(1, 'drop');
+    });
+  }
+  // DOM PIN for Monolith (crisp type resolving from noise)
+  let pinSpans = null;
+  function domPin(pin) {
+    UI.pin.innerHTML = [...pin].map(() => '<span></span>').join('');
+    pinSpans = [...UI.pin.children];
+  }
+  function pinTick() {
+    if (!pinSpans || !ST.pin || look !== 'mono') { if (look !== 'mono') UI.pin.style.opacity = '0'; return; }
+    UI.pin.style.opacity = String(clamp(ST.s.digits.x));
+    const ms = (performance.now() - ST.pinStart) * k();
+    pinSpans.forEach((s, i) => {
+      const lock = reduced || ms >= 260 + i * 120;
+      if (lock) {
+        const u = clamp((ms - 260 - i * 120) / 260);
+        s.textContent = ST.pin[i]; s.style.color = C.ink;
+        s.style.filter = reduced ? '' : `blur(${(1 - u) * 5}px)`;
+        s.style.transform = reduced ? '' : `translateY(${(1 - u) * (1 - u) * 8}px)`;
+      } else if (Math.random() < 0.6) { s.textContent = String(Math.floor(Math.random() * 10)); s.style.color = C.g1; s.style.filter = 'blur(1.5px)'; }
+    });
+  }
+  // Dot-matrix cells for Field
+  const GLYPH = {
+    0: ['01110', '10001', '10011', '10101', '11001', '10001', '01110'], 1: ['00100', '01100', '00100', '00100', '00100', '00100', '01110'],
+    2: ['01110', '10001', '00001', '00010', '00100', '01000', '11111'], 3: ['11110', '00001', '00001', '01110', '00001', '00001', '11110'],
+    4: ['00010', '00110', '01010', '10010', '11111', '00010', '00010'], 5: ['11111', '10000', '11110', '00001', '00001', '10001', '01110'],
+    6: ['00110', '01000', '10000', '11110', '10001', '10001', '01110'], 7: ['11111', '00001', '00010', '00100', '01000', '01000', '01000'],
+    8: ['01110', '10001', '10001', '01110', '10001', '10001', '01110'], 9: ['01110', '10001', '10001', '01111', '00001', '00010', '01100'],
+  };
+  const SP = 10, COLS = 38, ROWS = 52, OX = 5, OY = 5;
+  let pinCells = new Map();
+  function buildPinCells(pin) {
+    pinCells = new Map();
+    const gw = 4 * 5 + 3 * 2, c0 = Math.round((COLS - gw) / 2), r0 = Math.round((cy - OY) / SP) - 3;
+    [...pin].forEach((d, gi) => GLYPH[d].forEach((row, ry) => [...row].forEach((b, rx) => {
+      if (b === '1') pinCells.set((r0 + ry) * COLS + c0 + gi * 7 + rx, 0.12 * gi + Math.random() * 0.35);
+    })));
+  }
+  // ring geometry shared by all looks
+  const ringGeo = (p, w = 1.5) => { const Ro = R + (Rb - R) * Math.pow(p, 1.6), Ri = (R - w) * (1 - p); return { Ro, Ri }; };
+  let parts = [], drops = [], ripples = [], lastRipple = -9, pulses = [];
+
+  function drawInk(dt, T) {
+    const x = ctx, s = ST.s;
+    x.globalCompositeOperation = 'source-over'; x.filter = 'none';
+    x.fillStyle = '#000'; x.fillRect(0, 0, 380, 520);
+    x.globalCompositeOperation = 'lighter'; x.fillStyle = '#fff'; x.strokeStyle = '#fff';
+    const blur = b => { x.filter = `blur(${b}px)`; };
+    const disc = (X, Y, r) => { if (r > 0.3) { x.beginPath(); x.arc(X, Y, r, 0, Math.PI * 2); x.fill(); } };
+    blur(7);
+    const breath = reduced ? 1 : 1 + 0.25 * (0.5 - 0.5 * Math.cos(2 * Math.PI * T / 2.4));
+    disc(cx, cy, 12 * breath * s.core.x);
+    // lava-lamp satellites: full orbit while idle, a tighter orbit elsewhere (same drop size, so they
+    // keep fusing into the core and making it wobble: the goofiness is the point)
+    if (!reduced && s.core.x > 0.02) for (let i = 0; i < 3; i++) {
+      const a = T * (0.55 + i * 0.23) + i * 2.1, rr = (20 + 9 * Math.sin(T * 0.8 + i)) * s.core.x * (ST.mode === 'idle' ? 1 : 0.6);
+      disc(cx + Math.cos(a) * rr, cy + Math.sin(a) * rr, (4.5 + i) * s.core.x);
+    }
+    if (s.sonar.x > 0.05 && !reduced && T - lastRipple > 2.8) { ripples.push(T); lastRipple = T; }
+    ripples = ripples.filter(t0 => T - t0 < 2.6);
+    for (const t0 of ripples) { const u = (T - t0) / 2.6; x.lineWidth = 9 * Math.pow(1 - u, 1.3) * Math.min(1, s.sonar.x * 1.4); x.beginPath(); x.arc(cx, cy, 16 + u * 110, 0, Math.PI * 2); x.stroke(); }
+    // nearby devices: drops that pinch off the centre and drift to their place
+    // (blurred shapes below ~9 px radius fall under the threshold, so drops stay at least that big)
+    // Small drops have their own life: a breathing wobble, a bob, and a satellite that fuses in and out.
+    const goofy = (X, Y, r, ph) => {
+      if (r < 0.3) return;
+      if (reduced) { disc(X, Y, r); return; }
+      const bob = 2.2 * Math.sin(T * 1.3 + ph);
+      disc(X + 1.5 * Math.sin(T * 0.9 + ph * 2), Y + bob, r * (1 + 0.12 * Math.sin(T * 1.7 + ph)));
+      const a = T * (1.1 + 0.15 * (ph % 3)) + ph, rr = (12 + 5 * Math.sin(T * 0.9 + ph)) * (r / 11);
+      disc(X + Math.cos(a) * rr, Y + bob + Math.sin(a) * rr, 4.6 * (r / 11));
+    };
+    ST.nodes.forEach((n, i) => goofy(cx + (n.tx - cx) * n.k.x, cy + (n.ty - cy) * n.k.x, 11 * n.a.x, 1.7 + i * 2.3));
+    // the other phone's drop
+    goofy(cx, s.peerY.x, 10 * s.peer.x, 0.4);
+    // the ring, fed by droplets from the phone
+    if (s.ring.x > 0.02) {
+      const p = clamp(s.p.x), { Ro, Ri } = ringGeo(p);
+      const rc = (Ro + Ri) / 2, lw = Math.max(12, Ro - Ri);
+      blur(4); x.lineWidth = lw * clamp(s.ring.x); x.beginPath();
+      for (let i = 0; i <= 96; i++) {
+        const a = i / 96 * Math.PI * 2, wob = reduced ? 0 : 1.8 * Math.sin(5 * a + T * 2.2) * (1 - p);
+        const X = cx + Math.cos(a) * (rc + wob) * s.ringS.x, Y = cy + Math.sin(a) * (rc + wob) * s.ringS.x;
+        i ? x.lineTo(X, Y) : x.moveTo(X, Y);
+      }
+      x.stroke(); blur(7);
+      if (!reduced && ST.mode === 'ring') {
+        const sp = pxPerSec(ST.rate);
+        if (Math.random() < dt * (ST.rate < 1 ? 1.2 : 9)) drops.push({ y: s.peerY.x + 6, r: 3 + Math.random() * 2 });
+        drops = drops.filter(d => { d.y += sp * dt * 0.75; return d.y < cy - Ro + 4; });
+        for (const d of drops) disc(cx + Math.sin(d.y * 0.05) * 2, d.y, d.r);
+      }
+    } else drops = [];
+    if (s.puff.x > 0.5) {
+      x.beginPath();
+      for (let i = 0; i <= 120; i++) {
+        const a = i / 120 * Math.PI * 2, wob = reduced ? 0 : 7 * Math.sin(6 * a + T * 3) * Math.min(1, 60 / s.puff.x);
+        const r = s.puff.x + wob; i ? x.lineTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r) : x.moveTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r);
+      }
+      x.fill();
+    }
+    x.filter = 'none'; x.globalCompositeOperation = 'source-over';
+  }
+
+  // Ink code: all four digits draw on together as outlines (Geist 600's real contours), one smooth
+  // stroke, like a welcome screen; the line breathes with a soft wobble (the Ink goofiness), then the
+  // solid digits come into focus with a small springy bounce as the outlines fade. The focus blur
+  // is pre-rendered once per code (a few levels, crossfaded), so no frame blurs anything live.
+  const GEIST_DIGITS = {"upm":1000,"cap":710,"digits":{"0":{"adv":683,"contours":["M341.400634765625 -16Q250.600341796875 -16 184.20013427734375 28.79998779296875Q117.7999267578125 73.5999755859375 81.89984130859375 156.5999755859375Q45.999755859375 239.5999755859375 45.999755859375 354Q45.999755859375 468.4000244140625 82.099853515625 551.9000244140625Q118.199951171875 635.4000244140625 184.400146484375 680.7000122070312Q250.600341796875 726 341.400634765625 726Q432.8009033203125 726 498.80108642578125 680.7000122070312Q564.80126953125 635.4000244140625 600.9013671875 552.2000122070312Q637.00146484375 469 637.00146484375 354Q637.00146484375 240 601.1013793945312 157.0Q565.2012939453125 74 499.0010986328125 29.0Q432.8009033203125 -16 341.400634765625 -16Z","M341.400634765625 97.2017822265625Q418.999755859375 97.2017822265625 460.79925537109375 162.70123291015625Q502.5987548828125 228.20068359375 502.5987548828125 354Q502.5987548828125 438.3995361328125 483.89898681640625 496.09912109375Q465.19921875 553.7987060546875 429.4996337890625 583.2984619140625Q393.800048828125 612.7982177734375 341.400634765625 612.7982177734375Q289.6011962890625 612.7982177734375 253.70159912109375 583.2984619140625Q217.802001953125 553.7987060546875 199.10223388671875 496.09912109375Q180.4024658203125 438.3995361328125 180.4024658203125 354Q180.4024658203125 228.20068359375 222.20196533203125 162.70123291015625Q264.00146484375 97.2017822265625 341.400634765625 97.2017822265625Z"]},"1":{"adv":427,"contours":["M190.400146484375 0V486.797607421875H38.39990234375V585.59912109375H99.199951171875Q141.8001708984375 585.59912109375 167.90032958984375 596.9992065429688Q194.00048828125 608.3992919921875 205.6005859375 635.5994873046875Q217.20068359375 662.7996826171875 217.20068359375 710H320.40283203125V0Z"]},"2":{"adv":642,"contours":["M58.7999267578125 0Q58.7999267578125 85.8006591796875 82.89996337890625 150.50091552734375Q107 215.201171875 163.89984130859375 268.80108642578125Q220.7996826171875 322.4010009765625 317.59912109375 373.20068359375Q366.1990966796875 398.8006591796875 395.19903564453125 419.00054931640625Q424.198974609375 439.200439453125 436.9989013671875 460.80023193359375Q449.798828125 482.4000244140625 449.798828125 512.399658203125Q449.798828125 542.19921875 436.79901123046875 564.4989013671875Q423.7991943359375 586.798583984375 398.49957275390625 599.7984008789062Q373.199951171875 612.7982177734375 335.4005126953125 612.7982177734375Q274.4013671875 612.7982177734375 238.90185546875 578.5985107421875Q203.40234375 544.3988037109375 194.802490234375 480.3992919921875L60.7998046875 488.3994140625Q71.19970703125 598.7998046875 142.39990234375 662.39990234375Q213.60009765625 726 334.6004638671875 726Q413.2008056640625 726 469.00103759765625 699.3999633789062Q524.80126953125 672.7999267578125 554.3013916015625 625.099853515625Q583.801513671875 577.3997802734375 583.801513671875 514.399658203125Q583.801513671875 459.599609375 565.4014892578125 420.899658203125Q547.00146484375 382.19970703125 505.50152587890625 349.59979248046875Q464.0015869140625 316.9998779296875 394.40185546875 280Q305.602294921875 232.6002197265625 261.70263671875 189.4007568359375Q217.802978515625 146.2012939453125 214.802978515625 113.2017822265625H583.801513671875V0Z"]},"3":{"adv":637,"contours":["M316.200927734375 -16Q189.0003662109375 -16 120.00006103515625 42.7001953125Q50.999755859375 101.400390625 45.999755859375 199.801025390625L179.00244140625 205.801025390625Q184.6024169921875 148.801513671875 221.1019287109375 123.00164794921875Q257.6014404296875 97.2017822265625 316.200927734375 97.2017822265625Q355.4005126953125 97.2017822265625 387.2000732421875 108.501708984375Q418.9996337890625 119.8016357421875 437.99932861328125 143.9013671875Q456.9990234375 168.0010986328125 456.9990234375 206.00048828125Q456.9990234375 263.7996826171875 417.99951171875 291.79937744140625Q379 319.799072265625 313.6007080078125 319.799072265625H252.400390625V423.000244140625H313.6007080078125Q365 423.000244140625 399.299560546875 444.4000244140625Q433.59912109375 465.7998046875 433.59912109375 517.19921875Q433.59912109375 562.5986328125 405.09954833984375 587.6984252929688Q376.5999755859375 612.7982177734375 316.8006591796875 612.7982177734375Q257.601318359375 612.7982177734375 227.70166015625 588.9984130859375Q197.802001953125 565.1986083984375 191.60205078125 526.1990966796875L59.199462890625 533.399169921875Q69.5994873046875 620.599609375 136.1998291015625 673.2998046875Q202.8001708984375 726 316.8006591796875 726Q396.8011474609375 726 452.8013916015625 702.0999755859375Q508.8016357421875 678.199951171875 538.2017211914062 633.9998779296875Q567.601806640625 589.7998046875 567.601806640625 529.19970703125Q567.601806640625 465.1998291015625 525.9017944335938 424.2998046875Q484.2017822265625 383.3997802734375 405.6019287109375 368.7998046875V385.999755859375Q493.4019775390625 373.9996337890625 542.40185546875 324.59979248046875Q591.4017333984375 275.199951171875 591.4017333984375 198.800048828125Q591.4017333984375 131.2000732421875 557.1016845703125 83.00006103515625Q522.8016357421875 34.800048828125 461.00146484375 9.4000244140625Q399.2012939453125 -16 316.200927734375 -16Z"]},"4":{"adv":643,"contours":["M381.7994384765625 0V141.5992431640625H25.999755859375V248.0009765625L360.5985107421875 710H511.8021240234375V254.801025390625H596.6019287109375V141.5992431640625H511.8021240234375V0Z","M168.0020751953125 254.801025390625H381.7994384765625V541.19775390625Z"]},"5":{"adv":656,"contours":["M326.40087890625 -16Q243.400390625 -16 185.3001708984375 9.800048828125Q127.199951171875 35.60009765625 94.89990234375 82.40020751953125Q62.599853515625 129.2003173828125 57.1998291015625 191.4005126953125L190.00244140625 198.2005615234375Q198.4024658203125 147.8011474609375 234.10198974609375 122.70147705078125Q269.801513671875 97.601806640625 326.40087890625 97.601806640625Q390.6002197265625 97.601806640625 427.3997802734375 133.50140380859375Q464.1993408203125 169.4010009765625 464.1993408203125 233.600341796875Q464.1993408203125 275.1998291015625 447.49951171875 306.0994873046875Q430.7996826171875 336.9991455078125 399.800048828125 354.198974609375Q368.8004150390625 371.3988037109375 325.200927734375 371.3988037109375Q280.201171875 371.3988037109375 246.40155029296875 351.79888916015625Q212.6019287109375 332.198974609375 198.402099609375 300.1993408203125H66.399658203125L114.999755859375 710H549.802001953125V596.7982177734375H227.601806640625L199.60205078125 371.200439453125L182.802001953125 386.400390625Q199.2020263671875 414.2001953125 225.10198974609375 433.5001220703125Q251.001953125 452.800048828125 285.30194091796875 463.10003662109375Q319.6019287109375 473.4000244140625 359.60205078125 473.4000244140625Q432.2021484375 473.4000244140625 485.8021240234375 442.300048828125Q539.402099609375 411.2000732421875 568.8020629882812 356.900146484375Q598.2020263671875 302.6002197265625 598.2020263671875 233.600341796875Q598.2020263671875 158.60009765625 564.4019165039062 102.10003662109375Q530.601806640625 45.5999755859375 469.40155029296875 14.79998779296875Q408.2012939453125 -16 326.40087890625 -16Z"]},"6":{"adv":615,"contours":["M314.4007568359375 -16Q226.80029296875 -16 166.90008544921875 22.10009765625Q106.9998779296875 60.2001953125 76.49981689453125 133.00030517578125Q45.999755859375 205.8004150390625 45.999755859375 308.4005126953125Q45.999755859375 397.2005615234375 62.89990234375 473.20050048828125Q79.800048828125 549.200439453125 115.1002197265625 605.7003173828125Q150.400390625 662.2001953125 206.10052490234375 694.10009765625Q261.8006591796875 726 339.6005859375 726Q440.200927734375 726 498.00128173828125 677.099853515625Q555.8016357421875 628.19970703125 576.0015869140625 545.999267578125L452.3995361328125 536.399169921875Q440.3995361328125 572.798828125 415.09979248046875 593.5985717773438Q389.800048828125 614.3983154296875 339.2005615234375 614.3983154296875Q263.2012939453125 614.3983154296875 219.70172119140625 548.9989013671875Q176.2021484375 483.5994873046875 172.402099609375 348.00048828125L152.4019775390625 352.00048828125Q163.001953125 383.2001953125 188.30181884765625 410.0999755859375Q213.6016845703125 436.999755859375 251.90155029296875 453.4996337890625Q290.201416015625 469.99951171875 340.8013916015625 469.99951171875Q412.4014892578125 469.99951171875 466.2015380859375 440.799560546875Q520.0015869140625 411.599609375 549.7015991210938 358.49969482421875Q579.401611328125 305.3997802734375 579.401611328125 234.39990234375Q579.401611328125 155.599853515625 545.801513671875 99.4998779296875Q512.201416015625 43.39990234375 452.70123291015625 13.699951171875Q393.2010498046875 -16 314.4007568359375 -16Z","M314.400634765625 92.801513671875Q374 92.801513671875 411.299560546875 130.5010986328125Q448.59912109375 168.20068359375 448.59912109375 233.599853515625Q448.59912109375 274.9993896484375 432.3992919921875 305.799072265625Q416.199462890625 336.5987548828125 387.3997802734375 353.49859619140625Q358.60009765625 370.3984375 320.00048828125 370.3984375Q279.200927734375 370.3984375 247.40130615234375 353.49859619140625Q215.6016845703125 336.5987548828125 197.40191650390625 305.799072265625Q179.2021484375 274.9993896484375 179.2021484375 233.599853515625Q179.2021484375 192.2003173828125 195.70196533203125 160.40069580078125Q212.2017822265625 128.60107421875 242.80145263671875 110.7012939453125Q273.401123046875 92.801513671875 314.400634765625 92.801513671875Z"]},"7":{"adv":538,"contours":["M168.7994384765625 0Q168.7994384765625 110 197.39935302734375 215.0997314453125Q225.999267578125 320.199462890625 278.69903564453125 416.59906005859375Q331.3988037109375 512.9986572265625 403.1983642578125 596.7982177734375H20V710H537.600830078125V604.3983154296875Q458.201416015625 514.3990478515625 405.30169677734375 422.49951171875Q352.4019775390625 330.5999755859375 326.60205078125 227.30010986328125Q300.8021240234375 124.000244140625 300.8021240234375 0Z"]},"8":{"adv":644,"contours":["M322.001220703125 -16Q236.400634765625 -16 171.90032958984375 7.79998779296875Q107.4000244140625 31.5999755859375 71.69989013671875 78.39996337890625Q35.999755859375 125.199951171875 35.999755859375 193.7999267578125Q35.999755859375 272.4000244140625 84.59991455078125 323.7000732421875Q133.2000732421875 375.0001220703125 214.400390625 390.5999755859375L216.400390625 370.199951171875Q149.800048828125 384.7998046875 110.09991455078125 425.49993896484375Q70.3997802734375 466.2000732421875 70.3997802734375 531Q70.3997802734375 588.2000732421875 100.29986572265625 632.2000732421875Q130.199951171875 676.2000732421875 186.4002685546875 701.1000366210938Q242.6005859375 726 322.001220703125 726Q401.40185546875 726 457.90216064453125 701.1000366210938Q514.4024658203125 676.2000732421875 544.0025634765625 632.2000732421875Q573.6026611328125 588.2000732421875 573.6026611328125 531Q573.6026611328125 466.2000732421875 534.2025146484375 425.89996337890625Q494.8023681640625 385.599853515625 427.60205078125 370.199951171875L429.60205078125 390.5999755859375Q511.40234375 374.60009765625 559.7025146484375 323.50006103515625Q608.002685546875 272.4000244140625 608.002685546875 193.7999267578125Q608.002685546875 125.199951171875 572.5025634765625 78.39996337890625Q537.00244140625 31.5999755859375 472.8021240234375 7.79998779296875Q408.601806640625 -16 322.001220703125 -16Z","M322.001220703125 97.601806640625Q391.0006103515625 97.601806640625 432.30029296875 126.5015869140625Q473.5999755859375 155.4013671875 473.5999755859375 210.8006591796875Q473.5999755859375 264.0001220703125 435.3001708984375 296.2998046875Q397.0003662109375 328.5994873046875 322.001220703125 328.5994873046875Q247.60205078125 328.5994873046875 209.00225830078125 296.2998046875Q170.4024658203125 264.0001220703125 170.4024658203125 210.8006591796875Q170.4024658203125 155.4013671875 211.7021484375 126.5015869140625Q253.0018310546875 97.601806640625 322.001220703125 97.601806640625Z","M322.001220703125 426.2005615234375Q378.0006103515625 426.2005615234375 409.2003173828125 449.500244140625Q440.4000244140625 472.7999267578125 440.4000244140625 520.1993408203125Q440.4000244140625 562.798828125 410.40032958984375 587.99853515625Q380.400634765625 613.1982421875 322.001220703125 613.1982421875Q264.601806640625 613.1982421875 234.10211181640625 587.99853515625Q203.6024169921875 562.798828125 203.6024169921875 520.1993408203125Q203.6024169921875 472.7999267578125 234.8021240234375 449.500244140625Q266.0018310546875 426.2005615234375 322.001220703125 426.2005615234375Z"]},"9":{"adv":618,"contours":["M284.4010009765625 -16Q189.2005615234375 -16 130.100341796875 28.7000732421875Q71.0001220703125 73.400146484375 47.39990234375 152.200927734375L174.8021240234375 160.4010009765625Q186.0020751953125 129.2012939453125 213.40179443359375 112.4014892578125Q240.801513671875 95.6016845703125 284.4010009765625 95.6016845703125Q363.8004150390625 95.6016845703125 403.2999267578125 156.10101318359375Q442.7994384765625 216.600341796875 443.3994140625 354.3990478515625L463.1993408203125 347.598876953125Q437.3992919921875 289.3994140625 388.99951171875 259.2998046875Q340.5997314453125 229.2001953125 272.3997802734375 229.2001953125Q202.5997314453125 229.2001953125 149.39971923828125 259.400146484375Q96.19970703125 289.60009765625 66.0997314453125 344.0Q35.999755859375 398.39990234375 35.999755859375 470.7998046875Q35.999755859375 549.599853515625 68.7998046875 606.6998901367188Q101.599853515625 663.7999267578125 160.4000244140625 694.8999633789062Q219.2001953125 726 295.800537109375 726Q390.0008544921875 726 451.3011474609375 685.4000244140625Q512.6014404296875 644.800048828125 542.401611328125 568.89990234375Q572.2017822265625 492.999755859375 572.2017822265625 385.3992919921875Q572.2017822265625 293.9991455078125 555.8016357421875 219.89923095703125Q539.4014892578125 145.79931640625 504.80133056640625 93.29949951171875Q470.201171875 40.7996826171875 415.7010498046875 12.39984130859375Q361.200927734375 -16 284.4010009765625 -16Z","M296.40087890625 330.6011962890625Q337.8004150390625 330.6011962890625 368.4000244140625 347.40106201171875Q398.9996337890625 364.200927734375 416.29937744140625 395.60064697265625Q433.59912109375 427.0003662109375 433.59912109375 471.199951171875Q433.59912109375 514.599609375 417.49932861328125 547.499267578125Q401.3995361328125 580.39892578125 371.39990234375 598.7987060546875Q341.4002685546875 617.198486328125 299.4007568359375 617.198486328125Q258.80126953125 617.198486328125 229.20159912109375 599.0986938476562Q199.6019287109375 580.9989013671875 183.60211181640625 548.3992309570312Q167.602294921875 515.799560546875 167.602294921875 472.39990234375Q167.602294921875 428.80029296875 183.902099609375 397.1005859375Q200.201904296875 365.40087890625 229.0015869140625 348.00103759765625Q257.80126953125 330.6011962890625 296.40087890625 330.6011962890625Z"]}}}; // Geist (OFL), weight 600, font units, y up
+  const OUT = { size: 84, first: 120, stagger: 45, draw: 1050, gap: 60, reveal: 420, lineW: 1.8, wobble: 0.8 };
+  const FOCUS = [6, 3.5, 1.6, 0]; // blur levels the fill passes through (px)
+  const svgNS = 'http://www.w3.org/2000/svg';
+  const easeDraw = t => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2; // smooth, unhurried
+  let penPlan = null; // built once per code (and theme)
+  function buildPen(pin) {
+    const sc = OUT.size / GEIST_DIGITS.upm, CELL = 110;
+    const digits = [];
+    for (let i = 0; i < 4; i++) {
+      const g = GEIST_DIGITS.digits[pin[i]]; if (!g) continue;
+      const X = cx - 96 + i * 64 - g.adv * sc / 2, base = cy + 2 + GEIST_DIGITS.cap * sc / 2;
+      const centre = [cx - 96 + i * 64, cy + 2];
+      const contours = g.contours.map(d => {
+        const el = document.createElementNS(svgNS, 'path'); el.setAttribute('d', d);
+        const len = el.getTotalLength(), n = Math.max(12, Math.ceil(len * sc / 1.5));
+        const pts = [];
+        for (let j = 0; j <= n; j++) { const q = el.getPointAtLength(len * j / n); pts.push([X + q.x * sc, base - q.y * sc]); }
+        const nrm = pts.map((q, j) => { const a = pts[Math.max(0, j - 2)], b = pts[Math.min(n, j + 2)]; const nx = -(b[1] - a[1]), ny = b[0] - a[0], m = Math.hypot(nx, ny) || 1; return [nx / m, ny / m]; });
+        return { pts, nrm };
+      });
+      // the solid digit at each focus level, rendered once into its own cell
+      const path = new Path2D(g.contours.join(' '));
+      const levels = FOCUS.map(bl => {
+        const c = document.createElement('canvas'); c.width = c.height = CELL * dpr;
+        const q = c.getContext('2d'); q.scale(dpr, dpr);
+        q.translate(CELL / 2 - centre[0], CELL / 2 - centre[1]);
+        if (bl) q.filter = `blur(${bl}px)`;
+        q.fillStyle = C.ink; q.translate(X, base); q.scale(sc, -sc); q.fill(path);
+        return c;
+      });
+      digits.push({ contours, levels, centre, delay: i * OUT.stagger, phase: i * 1.7 });
+    }
+    return { pin, ink: C.ink, digits, drawn: OUT.first + 3 * OUT.stagger + OUT.draw };
+  }
+  function drawInkPin() {
+    fx.clearRect(0, 0, 380, 520); tr.clearRect(0, 0, 380, 520);
+    const s = ST.s;
+    if (look !== 'ink' || !ST.pin || s.digits.x <= 0.02) { penPlan = null; return; }
+    if (!penPlan || penPlan.pin !== ST.pin || penPlan.ink !== C.ink) penPlan = buildPen(ST.pin);
+    const a0 = clamp(s.digits.x), T = performance.now() / 1000;
+    const t = reduced ? 1e9 : (performance.now() - ST.pinStart) * k();
+    const u = clamp((t - penPlan.drawn - OUT.gap) / OUT.reveal); // the reveal, 0..1
+    fx.strokeStyle = C.ink; fx.lineCap = fx.lineJoin = 'round'; fx.lineWidth = OUT.lineW;
+    for (const d of penPlan.digits) {
+      // each digit floats: a slow bob and a slight sway of its own, before and after it fills
+      fx.save();
+      if (!reduced) {
+        fx.translate(d.centre[0], d.centre[1] + 1.6 * Math.sin(T * 1.25 + d.phase));
+        fx.rotate(0.02 * Math.sin(T * 0.8 + d.phase * 1.3));
+        fx.translate(-d.centre[0], -d.centre[1]);
+      }
+      // 1. the outline drawing on (all digits together, a beat apart), breathing as it goes
+      if (u < 1) {
+        const p = easeDraw(clamp((t - OUT.first - d.delay) / OUT.draw));
+        if (p > 0) {
+          const calm = 1 - clamp(u * 1.6);                 // the wobble settles as the digit fills
+          fx.globalAlpha = a0 * (1 - clamp(u / 0.7));
+          fx.beginPath();
+          for (const c of d.contours) {
+            const last = Math.max(1, Math.floor(p * (c.pts.length - 1)));
+            for (let j = 0; j <= last; j++) {
+              const w = reduced ? 0 : OUT.wobble * calm * Math.sin(j / 6 + T * 5 + d.phase);
+              const x = c.pts[j][0] + c.nrm[j][0] * w, y = c.pts[j][1] + c.nrm[j][1] * w;
+              j ? fx.lineTo(x, y) : fx.moveTo(x, y);
+            }
+          }
+          fx.stroke();
+        }
+      }
+      // 2. the solid digit comes into focus (pre-blurred levels, crossfaded) with a little bounce
+      if (u > 0) {
+        const e = 1 - Math.pow(1 - u, 3);
+        const f = e * (FOCUS.length - 1), i0 = Math.floor(f), i1 = Math.min(FOCUS.length - 1, i0 + 1), mix = f - i0;
+        const tt = u * OUT.reveal / 1000;
+        const bounce = reduced ? 1 : 1 + 0.06 * Math.exp(-7 * tt) * Math.cos(16 * tt) - 0.06 * Math.exp(-40 * tt); // springy settle
+        fx.save();
+        fx.translate(d.centre[0], d.centre[1]); fx.scale(bounce, bounce); fx.translate(-55, -55);
+        fx.globalAlpha = a0 * e * (1 - mix); fx.drawImage(d.levels[i0], 0, 0, 110, 110);
+        if (mix > 0) { fx.globalAlpha = a0 * e * mix; fx.drawImage(d.levels[i1], 0, 0, 110, 110); }
+        fx.restore();
+      }
+      fx.restore();
+    }
+    fx.globalAlpha = 1;
+  }
+
+  function drawMono(dt, T) {
+    const x = ctx, s = ST.s;
+    x.fillStyle = C.paper; x.fillRect(0, 0, 380, 520);
+    if (s.sonar.x > 0.01 && !reduced) for (let j = 0; j < 3; j++) {
+      const u = ((T / 2.8) + j / 3) % 1;
+      x.globalAlpha = 0.5 * Math.pow(1 - u, 1.6) * s.sonar.x; x.strokeStyle = C.g1; x.lineWidth = 1;
+      x.beginPath(); x.arc(cx, cy, 8 + u * 116, 0, Math.PI * 2); x.stroke();
+    }
+    x.globalAlpha = 1;
+    for (const n of ST.nodes) {
+      if (n.a.x < 0.01) continue;
+      const X = cx + (n.tx - cx) * n.k.x, Y = cy + (n.ty - cy) * n.k.x;
+      x.globalAlpha = clamp(n.a.x); x.strokeStyle = C.g2; x.lineWidth = 1;
+      x.beginPath(); x.moveTo(cx, cy); x.lineTo(X, Y); x.stroke();
+      x.fillStyle = C.ink; x.beginPath(); x.arc(X, Y, 4.5, 0, Math.PI * 2); x.fill();
+    }
+    x.globalAlpha = 1;
+    if (s.peer.x > 0.01) {
+      const ny = s.peerY.x, p = clamp(s.p.x);
+      const end = ST.mode === 'ring' ? cy - ringGeo(p).Ro - 22 * s.dial.x : cy - 12;
+      x.globalAlpha = clamp(s.peer.x); x.strokeStyle = C.g2; x.lineWidth = 1;
+      x.beginPath(); x.moveTo(cx, ny + 7); x.lineTo(cx, Math.max(ny + 7, end)); x.stroke();
+      x.fillStyle = C.ink; x.beginPath(); x.arc(cx, ny, 4, 0, Math.PI * 2); x.fill();
+      if (ST.mode === 'ring' && !reduced) {
+        const sp = pxPerSec(ST.rate);
+        if (Math.random() < dt * (ST.rate < 1 ? 2 : 22)) parts.push({ y: ny + 8 });
+        parts = parts.filter(q => { q.y += sp * dt; return q.y < end; });
+        for (const q of parts) x.fillRect(cx - 0.75, q.y, 1.5, ST.rate < 1 ? 3 : 7);
+      } else parts = [];
+      x.globalAlpha = 1;
+    }
+    if (s.core.x > 0.01) {
+      const b = reduced ? 1 : 1 + 0.42 * (0.5 - 0.5 * Math.cos(2 * Math.PI * T / 2.4));
+      x.fillStyle = C.ink; x.beginPath(); x.arc(cx, cy, 5 * b * s.core.x, 0, Math.PI * 2); x.fill();
+    }
+    if (s.dial.x > 0.01) {
+      for (let i = 0; i < 72; i++) {
+        const a = -Math.PI / 2 + i / 72 * Math.PI * 2, on = i / 72 < s.p.x;
+        x.strokeStyle = on ? C.ink : C.g2; x.globalAlpha = s.dial.x;
+        const r0 = R + 14, r1 = R + (i % 6 === 0 ? 21 : 18);
+        x.beginPath(); x.moveTo(cx + Math.cos(a) * r0, cy + Math.sin(a) * r0); x.lineTo(cx + Math.cos(a) * r1, cy + Math.sin(a) * r1); x.stroke();
+      }
+      x.globalAlpha = 1;
+    }
+    if (s.ring.x > 0.01) {
+      const p = clamp(s.p.x), { Ro, Ri } = ringGeo(p);
+      x.save(); x.translate(cx, cy); x.scale(s.ringS.x, s.ringS.x); x.globalAlpha = clamp(s.ring.x);
+      x.strokeStyle = C.ink; x.lineWidth = Math.max(1.5, Ro - Ri); x.beginPath(); x.arc(0, 0, (Ro + Ri) / 2, 0, Math.PI * 2); x.stroke(); x.restore();
+    }
+    if (s.puff.x > 0.5) { x.fillStyle = C.ink; x.beginPath(); x.arc(cx, cy, s.puff.x, 0, Math.PI * 2); x.fill(); }
+  }
+
+  function drawField(dt, T) {
+    const x = ctx, s = ST.s;
+    x.fillStyle = C.paper; x.fillRect(0, 0, 380, 520);
+    const p = clamp(s.p.x), { Ro, Ri } = ringGeo(p, 4);
+    const ny = s.peerY.x, br = reduced ? 1 : 0.5 - 0.5 * Math.cos(2 * Math.PI * T / 2.4);
+    const pinT = ST.pin ? (performance.now() - ST.pinStart) / 1000 * k() : 0;
+    if (ST.mode === 'ring' && !reduced) {
+      const sp = pxPerSec(ST.rate);
+      if (Math.random() < dt * (ST.rate < 1 ? 1.5 : 14)) pulses.push(ny + 10);
+      pulses = pulses.map(y => y + sp * dt).filter(y => y < cy - Ro);
+    } else pulses = [];
+    const nodes = ST.nodes.map(n => ({ X: cx + (n.tx - cx) * n.k.x, Y: cy + (n.ty - cy) * n.k.x, a: n.a.x }));
+    for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+      const X = OX + c * SP, Y = OY + r * SP, dx = X - cx, d = Math.hypot(dx, Y - cy);
+      let b = s.core.x * (d < 6 ? 1 : d < 16 ? 0.35 + 0.4 * br : 0);
+      if (s.sonar.x > 0.01 && !reduced) for (let j = 0; j < 3; j++) {
+        const u = ((T / 2.8) + j / 3) % 1, rr = 10 + u * 150;
+        b = Math.max(b, s.sonar.x * 0.75 * Math.pow(1 - u, 1.4) * Math.exp(-Math.pow((d - rr) / 6, 2)));
+      }
+      for (const n of nodes) if (n.a > 0.01 && Math.hypot(X - n.X, Y - n.Y) < 11) b = Math.max(b, n.a);
+      if (s.peer.x > 0.01) {
+        if (Math.hypot(X - cx, Y - ny) < 9) b = Math.max(b, s.peer.x);
+        if (Math.abs(dx) < 1 && Y > ny + 8 && Y < cy - (ST.mode === 'ring' ? Ro : 10)) {
+          let v = 0.28; for (const py of pulses) v = Math.max(v, Math.exp(-Math.pow((Y - py) / 7, 2)));
+          b = Math.max(b, v * s.peer.x);
+        }
+      }
+      if (s.digits.x > 0.01) {
+        const at = pinCells.get(r * COLS + c);
+        if (at !== undefined) b = Math.max(b, s.digits.x * (reduced || pinT > at + 0.25 ? 1 : 0.15 + 0.5 * Math.random()));
+        else if (!reduced && pinT < 0.9 && Math.abs(Y - cy) < 48 && Math.abs(dx) < 140 && Math.random() < 0.06 * (1 - pinT / 0.9)) b = Math.max(b, 0.5 * s.digits.x);
+      }
+      if (s.ring.x > 0.01) { const e = Math.min(d - Ri + 5, Ro - d + 5) / 5; if (e > 0) b = Math.max(b, s.ring.x * Math.min(1, e)); }
+      let rad = 1.1;
+      if (s.puff.x > 0.5 && d < s.puff.x) { b = 1; rad = 1.1 + (SP * 0.62 - 1.1) * clamp(s.fill.x); }
+      const lit = b > 0.02;
+      x.fillStyle = lit ? C.ink : C.g2; x.globalAlpha = lit ? 0.25 + 0.75 * Math.min(1, b) : 1;
+      x.beginPath(); x.arc(X, Y, lit ? rad + 0.5 * Math.min(1, b) : rad * 0.85, 0, Math.PI * 2); x.fill();
+    }
+    x.globalAlpha = 1;
+  }
+
+  // ================================================================ app model
+  const FILES = [
+    { name: 'Thesis draft v7.pdf', size: 4.2 }, { name: 'Lecture 12.mp4', size: 612 },
+    { name: 'IMG_8841.HEIC', size: 3.1 }, { name: 'Lab report.docx', size: 1.4 },
+  ];
+  const app = {
+    route: 'home', focus: null, name: 'Desk PC', vis: 'everyone', visLeft: 600, folder: 'Downloads', details: false,
+    transfers: [], pick: new Set([0, 2]), dropped: null, devTimers: [],
+  };
+  let look = 'ink', nextId = 1;
+  const randPin = () => String(1000 + Math.floor(Math.random() * 9000));
+  const mb = v => v >= 1000 ? `${(v / 1000).toFixed(2)} GB` : `${v < 10 ? v.toFixed(1) : Math.round(v)} MB`;
+  const titleOf = t => t.files.length === 1 ? t.files[0].name : `${t.files.length} files`;
+  const sizeOf = t => t.files.reduce((a, f) => a + f.size, 0);
+  const focused = () => app.transfers.find(t => t.id === app.focus);
+  const active = t => ['request', 'waiting', 'xfer'].includes(t.state);
+  const BT_RATE = 0.2, FAST = 33.9, UPGRADE_AT = 1.2;
+  const linkOf = t => t.t < UPGRADE_AT ? { name: 'Bluetooth', rate: BT_RATE, detail: 'Bluetooth · setting up link' } : { name: 'Direct link', rate: FAST, detail: 'Hotspot 5 GHz · Wi-Fi stayed on' };
+
+  function incoming(files) {
+    const t = { id: nextId++, dir: 'in', peer: "Dan's phone", files, pin: randPin(), state: 'request', t: 0, done: 0 };
+    app.transfers.unshift(t);
+    if (['home', 'done', 'activity'].includes(app.route)) go('request', t.id);
+    else renderDock(); // it waits in the dock, pulsing
+  }
+  function startSend(dev) {
+    const files = app.dropped || [...app.pick].map(i => FILES[i]);
+    const t = { id: nextId++, dir: 'out', peer: dev.name, files, pin: randPin(), state: 'waiting', t: 0, done: 0, wait: 2.2 };
+    app.transfers.unshift(t); app.dropped = null;
+    go('waiting', t.id);
+  }
+  function finish(t, state, msg) {
+    t.state = state; t.ended = performance.now();
+    if (app.focus === t.id && ['transfer', 'waiting', 'request'].includes(app.route)) {
+      if (state === 'done') go('done', t.id); else { go('home'); toast(msg); }
+    } else { if (msg) toast(msg); renderDock(); }
+  }
+
+  // ================================================================ routes
+  const BACK = { pick: 'home', devices: 'pick', waiting: 'home', request: 'home', transfer: 'home', done: 'home', activity: 'home', settings: 'home' };
+  function back() {
+    if (app.route === 'home') return;
+    const to = app.dropped && app.route === 'devices' ? 'home' : BACK[app.route];
+    if (app.route === 'devices') stopDiscovery();
+    go(to);
+  }
+  function go(route, focus) {
+    app.route = route;
+    if (focus !== undefined) app.focus = focus;
+    const t = focused();
+    document.querySelectorAll('#routes > div').forEach(d => d.classList.toggle('here', d.dataset.r === route));
+    // title bar
+    UI.back.hidden = route === 'home';
+    UI.mark.hidden = route !== 'home';
+    UI.crumb.textContent = { pick: 'Send', devices: 'Send', waiting: 'Send', request: 'Receive', transfer: t?.dir === 'out' ? 'Sending' : 'Receiving', done: '', activity: 'Activity', settings: 'Settings' }[route] || '';
+    UI.icons.forEach(i => i.hidden = route !== 'home');
+    win.classList.toggle('sheet', route === 'activity' || route === 'settings');
+    // stage
+    const sheet = ['pick', 'activity', 'settings'].includes(route);
+    if (route === 'home' || sheet) pose('idle', { dim: sheet });
+    else if (route === 'devices') pose('devices');
+    else if (route === 'waiting' || route === 'request') pose('pin', { pin: t.pin, peer: t.peer });
+    else if (route === 'transfer') pose('ring', { p: t.done / sizeOf(t), peer: t.peer });
+    else if (route === 'done') pose('done');
+    if (route === 'devices') startDiscovery(); else UI.nodes.innerHTML = '';
+    if (route !== 'done') clearTimeout(app.doneTimer);
+    if (route === 'done') app.doneTimer = setTimeout(() => { if (app.route === 'done') go('home'); }, 6000 / k());
+    renderPanel(); renderFooter(true); renderDock();
+  }
+
+  function pill(label, onClick, solid, disabled) {
+    const b = document.createElement('button');
+    b.className = 'pill' + (solid ? ' solid' : ''); b.textContent = label; if (disabled) b.disabled = true;
+    b.addEventListener('click', onClick); return b;
+  }
+  function renderFooter(fresh) {
+    const t = focused(), r = app.route;
+    let h = '', p = '', acts = [];
+    const visLine = app.vis === 'hidden' ? 'Hidden · only you can send from here' : `Everyone can see you for ${Math.floor(app.visLeft / 60)}:${String(Math.floor(app.visLeft % 60)).padStart(2, '0')}`;
+    if (r === 'home') { h = app.vis === 'hidden' ? 'Hidden' : `Visible as ${app.name}`; p = visLine; acts = [pill('Send files', () => go('pick'), true)]; }
+    if (r === 'pick') { h = 'Choose files'; p = `${app.pick.size} selected · ${mb([...app.pick].reduce((a, i) => a + FILES[i].size, 0))}`; acts = [pill('Continue', () => go('devices'), true, app.pick.size === 0)]; }
+    if (r === 'devices') { const n = app.dropped ? app.dropped.length : app.pick.size; h = `Send ${n === 1 ? (app.dropped || [...app.pick].map(i => FILES[i]))[0].name : n + ' files'}`; p = ST.nodes.length ? 'Choose a device' : 'Looking for nearby devices…'; acts = [pill('Cancel', () => { stopDiscovery(); app.dropped = null; go('home'); })]; }
+    if (r === 'waiting' && t) { h = `Waiting for ${t.peer}`; p = `Check the code matches, then accept on the phone`; acts = [pill('Hide', back), pill('Cancel send', () => finish(t, 'cancelled', null))]; }
+    if (r === 'request' && t) { h = `${t.peer} wants to send`; p = `${titleOf(t)} · ${mb(sizeOf(t))}`; acts = [pill('Decline', () => finish(t, 'declined', null)), pill('Accept', () => { t.state = 'xfer'; go('transfer'); }, true)]; }
+    if (r === 'transfer' && t) { h = titleOf(t); p = xferLine(t); acts = [pill('Hide', back), pill('Cancel', () => finish(t, 'cancelled', null))]; }
+    if (r === 'done' && t) { h = t.dir === 'in' ? `Saved to ${app.folder}` : `Sent to ${t.peer}`; p = titleOf(t); acts = t.dir === 'in' ? [pill('Open', () => toast('Opens the file'), true), pill('Show in folder', () => toast('Opens the folder'))] : [pill('Done', () => go('home'), true)]; }
+    if (r === 'activity') { const a = app.transfers.filter(active).length; h = 'Activity'; p = `${a} running · ${app.transfers.length - a} finished`; }
+    if (r === 'settings') { h = 'Settings'; p = 'Drift 0.1 · Quick Share compatible'; }
+    UI.h.textContent = h; UI.p.textContent = p;
+    UI.actions.replaceChildren(...acts);
+    if (fresh && !reduced) { UI.footer.classList.remove('fresh'); void UI.footer.offsetWidth; UI.footer.classList.add('fresh'); }
+  }
+  function xferLine(t) {
+    if (t.state === 'request' || t.state === 'waiting') return 'Waiting';
+    const l = linkOf(t), pct = Math.floor(100 * t.done / sizeOf(t));
+    return `${mb(t.done)} of ${mb(sizeOf(t))} · ${pct}%`;
+  }
+
+  // mini self-eating ring for chips and lists
+  function miniRing(p) {
+    const Ro = 6.5 + (2.4 - 6.5) * Math.pow(p, 1.6), Ri = 5.5 * (1 - p);
+    return `<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.5" fill="none" stroke="var(--g2)" stroke-width="1"/><circle cx="8" cy="8" r="${((Ro + Ri) / 2).toFixed(2)}" fill="none" stroke="var(--ink)" stroke-width="${Math.max(1, Ro - Ri).toFixed(2)}"/></svg>`;
+  }
+  const doneIcon = '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="var(--ink)"/><path d="M5 8.2 7 10l4-4.2" stroke="var(--paper)" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  function renderDock() {
+    const now = performance.now();
+    // Requests first (they need you), then running, then just finished.
+    const rank = t => ({ request: 0, xfer: 1, waiting: 2 })[t.state] ?? 3;
+    const show = ['home', 'devices', 'pick'].includes(app.route) || (['transfer', 'waiting', 'request'].includes(app.route));
+    const list = (show ? app.transfers : []).filter(t => !(t.id === app.focus && ['transfer', 'waiting', 'request', 'done'].includes(app.route)))
+      .filter(t => active(t) || (t.state === 'done' && now - t.ended < 6000 / k())).sort((a, b) => rank(a) - rank(b));
+    // One line, 344 px: two chips at most, sized so both fit; the rest fold into "+N" (opens Activity).
+    const shown = list.length <= 2 ? list : list.slice(0, 1), extra = list.length - shown.length;
+    const textMax = shown.length === 2 ? 92 : extra > 0 ? 196 : 250;
+    const chips = shown.map(t => {
+      let icon, txt, num = '';
+      if (t.state === 'request') { icon = '<span class="pulse"></span>'; txt = `${t.peer} wants to send`; }
+      else if (t.state === 'waiting') { icon = '<span class="pulse"></span>'; txt = `Waiting for ${t.peer}`; }
+      else if (t.state === 'xfer') { icon = miniRing(t.done / sizeOf(t)); txt = titleOf(t); num = `${Math.floor(100 * t.done / sizeOf(t))}%`; }
+      else { icon = doneIcon; txt = t.dir === 'in' ? `Saved ${titleOf(t)}` : `Sent to ${t.peer}`; }
+      const to = t.state === 'request' ? 'request' : t.state === 'waiting' ? 'waiting' : t.state === 'xfer' ? 'transfer' : 'activity';
+      return `<button class="chip" data-id="${t.id}" data-to="${to}">${icon}<span class="txt" style="max-width:${textMax}px">${txt}</span>${num ? `<span class="num">${num}</span>` : ''}</button>`;
+    });
+    if (extra > 0) chips.push(`<button class="chip" data-to="activity"><span class="txt">+${extra} more</span></button>`);
+    const sig = chips.join('');
+    if (UI.dock.dataset.sig !== sig.replace(/\d+%|<svg.*?<\/svg>/g, '')) {
+      UI.dock.innerHTML = sig; UI.dock.dataset.sig = sig.replace(/\d+%|<svg.*?<\/svg>/g, '');
+    } else {
+      // update numbers and rings in place (no re-animation)
+      UI.dock.querySelectorAll('.chip[data-id]').forEach(c => {
+        const t = app.transfers.find(t => t.id === +c.dataset.id);
+        if (t && t.state === 'xfer') { c.querySelector('svg').outerHTML = miniRing(t.done / sizeOf(t)); c.querySelector('.num').textContent = `${Math.floor(100 * t.done / sizeOf(t))}%`; }
+      });
+    }
+  }
+  UI.dock.addEventListener('click', e => {
+    const c = e.target.closest('.chip'); if (!c) return;
+    if (app.route === 'devices') stopDiscovery();
+    c.dataset.id ? go(c.dataset.to, +c.dataset.id) : go(c.dataset.to);
+  });
+
+  function renderPanel() {
+    const r = app.route, P = UI.panel;
+    if (r === 'pick') {
+      P.innerHTML = `<div class="list">${FILES.map((f, i) => `<button class="item" data-pick="${i}"><span class="check ${app.pick.has(i) ? 'on' : ''}"></span><span><div class="t">${f.name}</div><div class="s">${mb(f.size)}</div></span><span class="r">${f.name.split('.').pop()}</span></button>`).join('')}</div>`;
+    } else if (r === 'activity') {
+      P.innerHTML = app.transfers.length ? `<div class="list">${app.transfers.map(t => {
+        const st = { request: 'Waiting for you', waiting: 'Waiting for them', xfer: `${Math.floor(100 * t.done / sizeOf(t))}%`, done: t.dir === 'in' ? 'Saved' : 'Sent', declined: 'Declined', cancelled: 'Cancelled' }[t.state];
+        const icon = t.state === 'xfer' ? miniRing(t.done / sizeOf(t)) : t.state === 'done' ? doneIcon : `<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.5" fill="none" stroke="var(--g1)"/></svg>`;
+        return `<button class="item" data-act="${t.id}"><span style="width:16px;height:16px;display:grid">${icon}</span><span><div class="t">${titleOf(t)}</div><div class="s">${t.dir === 'in' ? 'From' : 'To'} ${t.peer} · ${mb(sizeOf(t))}</div></span><span class="r">${st}</span></button>`;
+      }).join('')}</div>` : `<p class="s" style="padding:24px 8px;color:var(--g1);font-size:13px">Nothing yet. Things you send and receive show up here.</p>`;
+    } else if (r === 'settings') {
+      P.innerHTML = `
+        <div class="set"><label for="nm">Name</label><input id="nm" value="${app.name}" maxlength="24" spellcheck="false"><span class="v">Phones see "Drift · ${app.name}".</span></div>
+        <div class="set"><span class="k">Visibility</span><div class="seg" data-seg="vis"><button data-v="everyone" aria-pressed="${app.vis === 'everyone'}">Everyone, 10 min</button><button data-v="hidden" aria-pressed="${app.vis === 'hidden'}">Hidden</button></div></div>
+        <div class="set"><span class="k">Save to</span><span class="v">C:\\Users\\you\\${app.folder}</span></div>
+        <div class="set"><span class="k">Look</span><div class="seg" data-seg="look"><button data-v="ink" aria-pressed="${look === 'ink'}">Ink</button><button data-v="mono" aria-pressed="${look === 'mono'}">Monolith</button><button data-v="field" aria-pressed="${look === 'field'}">Field</button></div></div>
+        <div class="set"><div class="switch"><span><span class="k">Link details</span><br><span class="v">Adds the link type, band and whether your Wi-Fi stayed on.</span></span><button class="tog" role="switch" aria-checked="${app.details}" aria-label="Link details" data-tog="details"></button></div></div>`;
+    }
+    P.classList.toggle('show', ['pick', 'activity', 'settings'].includes(r));
+    if (!['pick', 'activity', 'settings'].includes(r)) P.innerHTML = '';
+  }
+  UI.panel.addEventListener('click', e => {
+    const pk = e.target.closest('[data-pick]');
+    if (pk) { const i = +pk.dataset.pick; app.pick.has(i) ? app.pick.delete(i) : app.pick.add(i); renderPanel(); renderFooter(false); return; }
+    const ac = e.target.closest('[data-act]');
+    if (ac) { const t = app.transfers.find(t => t.id === +ac.dataset.act); if (t.state === 'xfer') go('transfer', t.id); else if (t.state === 'request') go('request', t.id); else if (t.state === 'waiting') go('waiting', t.id); else toast('Opens the file'); return; }
+    const sg = e.target.closest('.seg button');
+    if (sg) { const which = sg.parentElement.dataset.seg; if (which === 'vis') { app.vis = sg.dataset.v; app.visLeft = 600; } else setLook(sg.dataset.v); renderPanel(); return; }
+    const tg = e.target.closest('[data-tog]');
+    if (tg) { app.details = !app.details; renderPanel(); }
+  });
+  UI.panel.addEventListener('input', e => { if (e.target.id === 'nm') app.name = e.target.value.trim().toUpperCase() || 'DRIFT'; });
+
+  // device discovery (simulated)
+  const DEVICES = [{ id: 'd1', name: "Dan's phone", kind: 'Phone' }, { id: 'd2', name: 'Pixel Tablet', kind: 'Tablet' }, { id: 'd3', name: "Asha's Galaxy", kind: 'Phone' }];
+  function startDiscovery() {
+    stopDiscovery(); ST.nodes = []; UI.nodes.innerHTML = '';
+    DEVICES.forEach((d, i) => app.devTimers.push(setTimeout(() => {
+      if (app.route !== 'devices') return;
+      showDevices([d]);
+      const n = ST.nodes.find(n => n.id === d.id);
+      const b = document.createElement('button');
+      // The button covers the drop (click target) and puts the label clear below it.
+      b.style.left = `${n.tx - 60}px`; b.style.top = `${n.ty - 22}px`;
+      n.el = b;
+      b.innerHTML = `<span>${d.name}</span><small>${d.kind}</small>`;
+      b.setAttribute('aria-label', `Send to ${d.name}`);
+      b.addEventListener('click', () => { stopDiscovery(); startSend(d); });
+      UI.nodes.appendChild(b); renderFooter(false);
+    }, (650 + i * 900) / k())));
+  }
+  function stopDiscovery() { app.devTimers.forEach(clearTimeout); app.devTimers = []; }
+
+  // A lasting problem: one card, until dismissed (or the problem clears and the core says so).
+  let noticeT;
+  function notice(title, detail, autoHide = 0, action = null) {
+    const n = UI.notice;
+    clearTimeout(noticeT); if (autoHide) noticeT = setTimeout(() => n.classList.remove('show'), autoHide);
+    n.querySelector('.txt').innerHTML = `${title}${detail ? `<small>${detail}</small>` : ''}${action ? `<button class="act">${action[0]}</button>` : ''}`;
+    if (action) n.querySelector('.act').addEventListener('click', () => { n.classList.remove('show'); action[1](); });
+    n.classList.remove('show'); void n.offsetWidth; n.classList.add('show'); // replay the "i"
+  }
+  UI.notice.querySelector('.x').addEventListener('click', () => UI.notice.classList.remove('show'));
+  let toastT;
+  // One-off failures use the card too ("Title. Detail" splits into its two lines) and leave by themselves.
+  function toast(msg) {
+    if (!msg) return;
+    const cut = msg.search(/[.:]/);
+    if (cut > 0 && cut < msg.length - 1) { const d = msg.slice(cut + 1).trim().replace(/\.$/, ''); notice(msg.slice(0, cut), d ? d[0].toUpperCase() + d.slice(1) + '.' : '', 5000); }
+    else notice(msg.replace(/\.$/, ''), '', 5000);
+  }
+
+  // ================================================================ title bar + keys + drop
+  UI.back.addEventListener('click', back);
+  UI.icons.forEach(i => i.addEventListener('click', () => go(i.dataset.go)));
+  addEventListener('keydown', e => { if (e.key === 'Escape' && !e.target.closest?.('input')) back(); });
+  win.addEventListener('dragover', e => { e.preventDefault(); win.classList.add('dragover'); });
+  win.addEventListener('dragleave', () => win.classList.remove('dragover'));
+  win.addEventListener('drop', e => {
+    e.preventDefault(); win.classList.remove('dragover');
+    const fs = [...(e.dataTransfer?.files || [])].map(f => ({ name: f.name, size: Math.max(0.1, f.size / 1e6) }));
+    if (fs.length) dropFiles(fs);
+  });
+  function dropFiles(fs) {
+    if (app.route === 'devices') stopDiscovery();
+    app.dropped = fs; go('devices');
+  }
+
+  // ================================================================ simulation + frame loop
+  let T = 0, last = performance.now(), footTick = 0;
+  function frame(now) {
+    const raw = Math.min(0.05, (now - last) / 1000); last = now;
+    const dt = raw * k(); T += dt;
+    // transfers advance
+    for (const t of app.transfers) {
+      if (t.state === 'waiting') { t.wait -= dt; if (t.wait <= 0) { t.state = 'xfer'; if (app.focus === t.id && app.route === 'waiting') go('transfer'); else renderDock(); } }
+      if (t.state === 'xfer') {
+        t.t += dt; const l = linkOf(t);
+        t.done = Math.min(sizeOf(t), t.done + l.rate * dt * (0.92 + 0.16 * Math.random()));
+        if (t.done >= sizeOf(t)) finish(t, 'done', null);
+      }
+    }
+    if (app.vis === 'everyone') { app.visLeft -= raw; if (app.visLeft <= 0) { app.vis = 'hidden'; } }
+    // stage inputs
+    const f = focused();
+    if (app.route === 'transfer' && f) { ST.s.p.go(f.done / sizeOf(f), 'settle'); ST.rate = linkOf(f).rate; }
+    for (const s of Object.values(ST.s)) s.step(dt);
+    for (const n of ST.nodes) {
+      n.a.step(dt); n.k.step(dt);
+      // the label arrives once the drop has pinched off and settled
+      if (n.el) { n.el.style.opacity = String(clamp((n.k.x - 0.8) / 0.2) * clamp(n.a.x)); n.el.style.transform = `translateY(${(1 - clamp(n.k.x)) * 6}px)`; }
+    }
+    UI.canvas.style.opacity = String(ST.s.dim.x);
+    if (look === 'ink') drawInk(dt, T); else if (look === 'mono') drawMono(dt, T); else drawField(dt, T);
+    drawInkPin();
+    pinTick();
+    // crisp overlays shared by all looks
+    const showPct = look !== 'field' && ST.s.ring.x > 0.01;
+    UI.pct.style.opacity = showPct ? String(clamp(1 - (clamp(ST.s.p.x) - 0.3) * 3.2) * clamp(ST.s.ring.x)) : '0';
+    UI.pct.textContent = `${Math.floor(clamp(ST.s.p.x) * 100)}%`;
+    UI.pct.style.color = look === 'ink' ? C.ink : '';
+    UI.peer.style.opacity = String(clamp(ST.s.peer.x) * (ST.mode === 'done' ? 0 : 1));
+    // The phone's name sits right of its drop, centred on it, and follows the Ink drop's bob.
+    const bob = look === 'ink' && !reduced ? 2.2 * Math.sin(T * 1.3 + 0.4) : 0;
+    UI.peer.style.left = '0px'; UI.peer.style.top = '0px';
+    UI.peer.style.transform = `translate3d(${cx + 22}px, ${(ST.s.peerY.x + bob - 7).toFixed(2)}px, 0)`;
+    UI.peer.textContent = ST.peerName || '';
+    // title-bar meta: visibility, or the live link while a transfer is on screen
+    let meta = '';
+    if ((app.route === 'transfer') && f) { const l = linkOf(f); meta = app.details ? `${l.detail} · ${l.rate.toFixed(1)} MB/s` : `${l.name} · ${l.rate.toFixed(1)} MB/s`; }
+    else if (app.route === 'home') meta = app.vis === 'hidden' ? 'Hidden' : `Visible ${Math.floor(app.visLeft / 60)}:${String(Math.floor(app.visLeft % 60)).padStart(2, '0')}`;
+    else if (app.route === 'waiting' || app.route === 'request') meta = `Code ${f?.pin ?? ''}`;
+    UI.meta.textContent = meta;
+    // footer + dock refresh at 8 Hz
+    footTick += raw;
+    if (footTick > 0.125) {
+      footTick = 0;
+      if (app.route === 'transfer' && f) UI.p.textContent = xferLine(f);
+      if (app.route === 'home') renderFooter(false);
+      if (app.route === 'activity') { renderPanel(); renderFooter(false); }
+      renderDock();
+    }
+    requestAnimationFrame(frame);
+  }
+  go('home');
+  requestAnimationFrame(t => { last = t; frame(t); });
+
+  // ================================================================ page controls
+  document.getElementById('simPhoto').addEventListener('click', () => incoming([{ name: 'IMG_20261114_0932.jpg', size: 148 }]));
+  document.getElementById('simWarn').addEventListener('click', () => notice("Quit Google Quick Share", "Phones may reach it instead of Drift.", 0, ["Quit it", () => {}]));
+  document.getElementById('simAlbum').addEventListener('click', () => incoming(Array.from({ length: 24 }, (_, i) => ({ name: `IMG_${4100 + i}.jpg`, size: 38 }))));
+  document.getElementById('simDrop').addEventListener('click', () => dropFiles([{ name: 'Slides final.key', size: 86 }, { name: 'Notes.txt', size: 0.1 }]));
+  function setLook(l) {
+    look = l;
+    win.classList.remove('ink', 'mono', 'field'); win.classList.add(l);
+    document.querySelectorAll('[data-look]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.look === l)));
+    if (l === 'mono' && ST.pin) domPin(ST.pin);
+    if (app.route === 'settings') renderPanel();
+  }
+  document.querySelectorAll('[data-look]').forEach(b => b.addEventListener('click', () => setLook(b.dataset.look)));
+  const toggle = (id, f) => { const b = document.getElementById(id); b.addEventListener('click', () => b.setAttribute('aria-pressed', String(f()))); };
+  toggle('light', () => { const on = win.classList.toggle('light'); readColors(); return on; });
+  toggle('slow', () => (slow = !slow));
+  const rb = document.getElementById('reduced'); rb.setAttribute('aria-pressed', String(reduced));
+  toggle('reduced', () => (reduced = !reduced));
+})();
+</script>

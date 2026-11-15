@@ -1,0 +1,91 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.22621.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
+    <RootNamespace>Drift</RootNamespace>
+    <AssemblyName>Drift</AssemblyName>
+    <UseWinUI>true</UseWinUI>
+    <Platforms>x64</Platforms>
+    <Platform>x64</Platform>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <!-- Unpackaged for development; `-p:DriftPackage=true` builds the signed MSIX (package.ps1). -->
+    <WindowsPackageType>None</WindowsPackageType>
+    <!-- needed even unpackaged: without it `dotnet publish` leaves out Drift.pri and the .xbf files -->
+    <EnableMsixTooling>true</EnableMsixTooling>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <ApplicationIcon>Assets\Drift.ico</ApplicationIcon>
+    <SelfContained>true</SelfContained>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- Program.cs is the entry point (Velopack's install/uninstall hooks run before the UI). -->
+    <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
+    <Version>0.1.0</Version>
+    <!-- publish only: strip unused framework code (partial: Drift's own assembly is kept whole) -->
+    <PublishTrimmed>true</PublishTrimmed>
+    <TrimMode>partial</TrimMode>
+    <!-- trimming turns reflection JSON off by default; Drift's own types are kept whole (partial),
+         so settings and the app <-> core messages stay on plain System.Text.Json -->
+    <JsonSerializerIsReflectionEnabledByDefault>true</JsonSerializerIsReflectionEnabledByDefault>
+    <NoWarn>$(NoWarn);IL2026</NoWarn>
+  </PropertyGroup>
+
+  <!-- MSIX (milestone 6): Package.appxmanifest, signed with the certificate whose thumbprint
+       package.ps1 passes in. Output goes to dist/. -->
+  <PropertyGroup Condition="'$(DriftPackage)' == 'true'">
+    <WindowsPackageType>MSIX</WindowsPackageType>
+    <EnableMsixTooling>true</EnableMsixTooling>
+    <GenerateAppxPackageOnBuild>true</GenerateAppxPackageOnBuild>
+    <AppxPackageSigningEnabled>true</AppxPackageSigningEnabled>
+    <PackageCertificateThumbprint>$(DriftCertThumbprint)</PackageCertificateThumbprint>
+    <AppxPackageSigningTimestampDigestAlgorithm>SHA256</AppxPackageSigningTimestampDigestAlgorithm>
+    <AppxBundle>Never</AppxBundle>
+    <AppxPackageDir>$(MSBuildThisFileDirectory)..\..\dist\</AppxPackageDir>
+    <AppxSymbolPackageEnabled>false</AppxSymbolPackageEnabled>
+    <GenerateTestArtifacts>false</GenerateTestArtifacts>
+    <DefineConstants>$(DefineConstants);DRIFT_PACKAGED</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(DriftPackage)' == 'true'">
+    <AppxManifest Include="Package.appxmanifest" />
+    <Content Include="Assets\Tiles\*.png" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(DriftPackage)' != 'true'">
+    <None Include="Package.appxmanifest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Only the App SDK parts Drift uses (UI, windowing, app lifecycle, notifications, text). The
+         full Microsoft.WindowsAppSDK bundle adds AI/ML/search runtimes (~45 MB) Drift never calls. -->
+    <PackageReference Include="Microsoft.WindowsAppSDK.Base" Version="2.6.5" />
+    <PackageReference Include="Microsoft.WindowsAppSDK.Runtime" Version="2.6.5" />
+    <PackageReference Include="Microsoft.WindowsAppSDK.Foundation" Version="2.6.5" />
+    <PackageReference Include="Microsoft.WindowsAppSDK.InteractiveExperiences" Version="2.6.5" />
+    <PackageReference Include="Microsoft.WindowsAppSDK.WinUI" Version="2.6.5" />
+    <PackageReference Include="Microsoft.WindowsAppSDK.DWrite" Version="2.6.5" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.28000.2957" />
+    <!-- Win2D (MIT): GPU 2D drawing + effects for the stage (Ink needs blur + threshold). -->
+    <PackageReference Include="Microsoft.Graphics.Win2D" Version="1.4.0" />
+    <PackageReference Include="Velopack" Version="1.2.161" />
+  </ItemGroup>
+
+  <!-- One design source of truth, shared with the Linux UI. -->
+  <ItemGroup>
+    <Content Include="..\..\design\motion.json" Link="design\motion.json" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\..\design\tokens.json" Link="design\tokens.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!-- Geist + Geist Mono (SIL OFL 1.1, see Assets/Fonts/OFL.txt). -->
+  <ItemGroup>
+    <Content Include="Assets\Fonts\*.ttf" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Assets\Fonts\OFL.txt" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Assets\Drift.ico" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!-- The Rust core (drift_ffi.dll), when built. -->
+  <ItemGroup>
+    <Content Include="..\..\target\release\drift_ffi.dll" Link="drift_ffi.dll" CopyToOutputDirectory="PreserveNewest" Condition="Exists('..\..\target\release\drift_ffi.dll')" />
+  </ItemGroup>
+</Project>

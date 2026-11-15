@@ -1,0 +1,192 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Application
+    x:Class="Drift.App"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
+            </ResourceDictionary.MergedDictionaries>
+
+            <!-- Colours are filled in from design/tokens.json at startup (App.ApplyTokens). -->
+            <SolidColorBrush x:Key="DriftBg" Color="Black" />
+            <SolidColorBrush x:Key="DriftFg" Color="White" />
+            <SolidColorBrush x:Key="DriftGrey1" Color="#8A8A8A" />
+            <SolidColorBrush x:Key="DriftGrey2" Color="#2A2A2A" />
+            <SolidColorBrush x:Key="DriftClear" Color="Transparent" />
+
+            <FontFamily x:Key="DriftText">ms-appx:///Assets/Fonts/Geist-Variable.ttf#Geist</FontFamily>
+            <FontFamily x:Key="DriftDisplay">ms-appx:///Assets/Fonts/Geist-Variable.ttf#Geist</FontFamily>
+            <FontFamily x:Key="DriftMono">ms-appx:///Assets/Fonts/GeistMono-Variable.ttf#Geist Mono</FontFamily>
+
+            <!-- Pill (prototype .pill): 500 13px Geist, 11px/18px padding, 1px border, a true capsule
+                 (radius = half the 37px height; WinUI draws a larger radius as an ellipse).
+                 Hover: border goes to ink. Press: scale .96. -->
+            <Style x:Key="Pill" TargetType="Button">
+                <Setter Property="FontFamily" Value="{StaticResource DriftText}" />
+                <Setter Property="FontSize" Value="13" />
+                <Setter Property="FontWeight" Value="Medium" />
+                <Setter Property="Height" Value="37" />
+                <Setter Property="Padding" Value="18,0,18,1" />
+                <Setter Property="Background" Value="{StaticResource DriftClear}" />
+                <Setter Property="Foreground" Value="{StaticResource DriftFg}" />
+                <Setter Property="BorderBrush" Value="{StaticResource DriftGrey1}" />
+                <Setter Property="BorderThickness" Value="1" />
+                <Setter Property="UseSystemFocusVisuals" Value="True" />
+                <Setter Property="CornerRadius" Value="18.5" />
+                <Setter Property="FocusVisualMargin" Value="-3" />
+                <Setter Property="FocusVisualPrimaryBrush" Value="{StaticResource DriftFg}" />
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="Button">
+                            <Grid x:Name="Root" RenderTransformOrigin="0.5,0.5">
+                                <Grid.RenderTransform>
+                                    <ScaleTransform x:Name="Press" ScaleX="1" ScaleY="1" />
+                                </Grid.RenderTransform>
+                                <Border x:Name="Body" CornerRadius="18.5" Background="{TemplateBinding Background}"
+                                        BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" />
+                                <Border x:Name="HoverEdge" CornerRadius="18.5" BorderBrush="{TemplateBinding Foreground}" BorderThickness="1" Opacity="0" />
+                                <ContentPresenter Padding="{TemplateBinding Padding}" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                  Foreground="{TemplateBinding Foreground}" FontFamily="{TemplateBinding FontFamily}"
+                                                  FontSize="{TemplateBinding FontSize}" FontWeight="{TemplateBinding FontWeight}"
+                                                  Content="{TemplateBinding Content}" />
+                                <VisualStateManager.VisualStateGroups>
+                                    <VisualStateGroup x:Name="CommonStates">
+                                        <!-- the press scale eases over 120 ms both ways (prototype: transition transform .12s) -->
+                                        <VisualStateGroup.Transitions>
+                                            <VisualTransition GeneratedDuration="0:0:0.12">
+                                                <VisualTransition.GeneratedEasingFunction>
+                                                    <CubicEase EasingMode="EaseOut" />
+                                                </VisualTransition.GeneratedEasingFunction>
+                                            </VisualTransition>
+                                        </VisualStateGroup.Transitions>
+                                        <VisualState x:Name="Normal" />
+                                        <VisualState x:Name="PointerOver">
+                                            <VisualState.Setters><Setter Target="HoverEdge.Opacity" Value="1" /></VisualState.Setters>
+                                        </VisualState>
+                                        <VisualState x:Name="Pressed">
+                                            <VisualState.Setters>
+                                                <Setter Target="HoverEdge.Opacity" Value="1" />
+                                            </VisualState.Setters>
+                                            <Storyboard>
+                                                <DoubleAnimation Storyboard.TargetName="Press" Storyboard.TargetProperty="ScaleX" To="0.96" Duration="0" />
+                                                <DoubleAnimation Storyboard.TargetName="Press" Storyboard.TargetProperty="ScaleY" To="0.96" Duration="0" />
+                                            </Storyboard>
+                                        </VisualState>
+                                        <VisualState x:Name="Disabled">
+                                            <VisualState.Setters><Setter Target="Root.Opacity" Value="0.35" /></VisualState.Setters>
+                                        </VisualState>
+                                    </VisualStateGroup>
+                                </VisualStateManager.VisualStateGroups>
+                            </Grid>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+            <Style x:Key="PillSolid" TargetType="Button" BasedOn="{StaticResource Pill}">
+                <Setter Property="Background" Value="{StaticResource DriftFg}" />
+                <Setter Property="Foreground" Value="{StaticResource DriftBg}" />
+                <Setter Property="BorderBrush" Value="{StaticResource DriftFg}" />
+            </Style>
+
+            <!-- Round icon button (prototype .bar .back/.icon: 30×30, hover = ink at 10%). -->
+            <Style x:Key="Glyph" TargetType="Button">
+                <Setter Property="CornerRadius" Value="15" />
+                <Setter Property="FocusVisualMargin" Value="-2" />
+                <Setter Property="FocusVisualPrimaryBrush" Value="{StaticResource DriftFg}" />
+                <Setter Property="Width" Value="30" />
+                <Setter Property="Height" Value="30" />
+                <Setter Property="Padding" Value="0" />
+                <Setter Property="Background" Value="{StaticResource DriftClear}" />
+                <Setter Property="Foreground" Value="{StaticResource DriftGrey1}" />
+                <Setter Property="FontFamily" Value="{StaticResource DriftText}" />
+                <Setter Property="FontSize" Value="14" />
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="Button">
+                            <Grid>
+                                <Ellipse x:Name="Hover" Fill="{StaticResource DriftFg}" Opacity="0" />
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{TemplateBinding Foreground}"
+                                                  FontFamily="{TemplateBinding FontFamily}" FontSize="{TemplateBinding FontSize}"
+                                                  Content="{TemplateBinding Content}" />
+                                <VisualStateManager.VisualStateGroups>
+                                    <VisualStateGroup x:Name="CommonStates">
+                                        <VisualState x:Name="Normal" />
+                                        <VisualState x:Name="PointerOver">
+                                            <VisualState.Setters><Setter Target="Hover.Opacity" Value="0.1" /></VisualState.Setters>
+                                        </VisualState>
+                                        <VisualState x:Name="Pressed">
+                                            <VisualState.Setters><Setter Target="Hover.Opacity" Value="0.18" /></VisualState.Setters>
+                                        </VisualState>
+                                    </VisualStateGroup>
+                                </VisualStateManager.VisualStateGroups>
+                            </Grid>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <!-- Window glyphs (– ×): bare 14px text; hover is a 22px circle (never an oval). -->
+            <Style x:Key="WinGlyph" TargetType="Button" BasedOn="{StaticResource Glyph}">
+                <Setter Property="Width" Value="22" />
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="Button">
+                            <Grid Background="Transparent">
+                                <Ellipse x:Name="Hover" Width="22" Height="22" Fill="{StaticResource DriftFg}" Opacity="0" />
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{TemplateBinding Foreground}"
+                                                  FontFamily="{TemplateBinding FontFamily}" FontSize="{TemplateBinding FontSize}"
+                                                  Content="{TemplateBinding Content}" />
+                                <VisualStateManager.VisualStateGroups>
+                                    <VisualStateGroup x:Name="CommonStates">
+                                        <VisualState x:Name="Normal" />
+                                        <VisualState x:Name="PointerOver">
+                                            <VisualState.Setters><Setter Target="Hover.Opacity" Value="0.1" /></VisualState.Setters>
+                                        </VisualState>
+                                        <VisualState x:Name="Pressed">
+                                            <VisualState.Setters><Setter Target="Hover.Opacity" Value="0.18" /></VisualState.Setters>
+                                        </VisualState>
+                                    </VisualStateGroup>
+                                </VisualStateManager.VisualStateGroups>
+                            </Grid>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <!-- Plain surface button (rows, chips, device nodes): no system chrome at all. -->
+            <Style x:Key="Bare" TargetType="Button">
+                <Setter Property="Background" Value="{StaticResource DriftClear}" />
+                <Setter Property="Padding" Value="0" />
+                <Setter Property="BorderThickness" Value="0" />
+                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                <Setter Property="VerticalContentAlignment" Value="Stretch" />
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="Button">
+                            <Grid>
+                                <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                                        BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="{TemplateBinding CornerRadius}" />
+                                <Border x:Name="Hover" Background="{StaticResource DriftFg}" CornerRadius="{TemplateBinding CornerRadius}" Opacity="0" />
+                                <ContentPresenter Padding="{TemplateBinding Padding}" HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                                  VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}" Content="{TemplateBinding Content}" />
+                                <VisualStateManager.VisualStateGroups>
+                                    <VisualStateGroup x:Name="CommonStates">
+                                        <VisualState x:Name="Normal" />
+                                        <VisualState x:Name="PointerOver">
+                                            <VisualState.Setters><Setter Target="Hover.Opacity" Value="0.06" /></VisualState.Setters>
+                                        </VisualState>
+                                        <VisualState x:Name="Pressed">
+                                            <VisualState.Setters><Setter Target="Hover.Opacity" Value="0.12" /></VisualState.Setters>
+                                        </VisualState>
+                                    </VisualStateGroup>
+                                </VisualStateManager.VisualStateGroups>
+                            </Grid>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>

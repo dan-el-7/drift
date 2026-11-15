@@ -1,0 +1,18 @@
+[package]
+name = "drift-app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.104"
+base64 = "0.22"
+drift-core = { version = "0.1.0", path = "../core" }
+drift-net = { version = "0.1.0", path = "../net" }
+mdns-sd = "0.21"
+rand = "0.8"
+tokio = { version = "1.54.1", features = ["rt", "macros", "net", "sync", "time", "io-util"] }
+tracing = "0.1.44"
+
+[target."cfg(windows)".dependencies]
+drift-platform-win = { version = "0.1.0", path = "../platform-win" }
+windows = { version = "0.62", features = ["Networking_Sockets"] }
