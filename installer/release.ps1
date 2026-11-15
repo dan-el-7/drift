@@ -11,6 +11,10 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path $PSScriptRoot
 Set-Location $root
 
+# Keep this machine's paths (user name, folders) out of the binaries: Rust embeds source paths for
+# panic messages, .NET the PDB path. (Encoded flags: one per -separated item, spaces are fine.)
+$env:CARGO_ENCODED_RUSTFLAGS = @("--remap-path-prefix=$env:USERPROFILE=~", "--remap-path-prefix=$root=.") -join [char]0x1f
+
 Write-Host "core: drift_ffi (release)"
 cargo build -p drift-ffi --release
 if ($LASTEXITCODE) { throw "cargo build failed" }
@@ -19,7 +23,7 @@ Write-Host "app: publish (self-contained, win-x64)"
 # Outside the repo: MSBuild's publish copy breaks on an apostrophe in the path.
 $pub = Join-Path ([IO.Path]::GetTempPath()) "drift-publish"
 if (Test-Path $pub) { Remove-Item $pub -Recurse -Force }
-dotnet publish ui\windows\Drift.csproj -c Release -p:Platform=x64 -r win-x64 --self-contained -p:Version=$Version -o $pub
+dotnet publish ui\windows\Drift.csproj -c Release -p:Platform=x64 -r win-x64 --self-contained -p:Version=$Version -p:PathMap="$root=." -o $pub
 if ($LASTEXITCODE) { throw "dotnet publish failed" }
 if (-not (Test-Path (Join-Path $pub "drift_ffi.dll"))) { throw "drift_ffi.dll missing from the publish folder" }
 

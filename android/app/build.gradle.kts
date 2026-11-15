@@ -49,6 +49,10 @@ val cargoNdk = tasks.register<Exec>("cargoNdk") {
     if (ndk != null) environment("ANDROID_NDK_HOME", ndk.absolutePath)
     // The NDK's clang wrapper can't take paths with an apostrophe: build elsewhere.
     environment("CARGO_TARGET_DIR", File(System.getenv("LOCALAPPDATA") ?: System.getProperty("java.io.tmpdir"), "drift-build/android-target").absolutePath)
+    // Rust embeds source paths (panic messages): map this machine's folders away. Set here, the
+    // config's target rustflags are ignored, so aes_armv8 (.cargo/config.toml) is repeated.
+    val home = System.getProperty("user.home")
+    environment("CARGO_ENCODED_RUSTFLAGS", listOf("--cfg", "aes_armv8", "--remap-path-prefix=$home=~", "--remap-path-prefix=${repo.absolutePath}=.").joinToString("\u001f"))
     val release = gradle.startParameter.taskNames.any { it.contains("Release", ignoreCase = true) }
     commandLine(
         listOf("cargo", "ndk", "-t", "arm64-v8a", "-P", "31", "-o", "android/app/src/main/jniLibs", "build", "-p", "drift-ffi")
