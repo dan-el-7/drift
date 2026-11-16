@@ -24,6 +24,24 @@ If something gets stuck, Settings has **Restart Bluetooth** (on the PC) and a Wi
 
 Quit Google's own Quick Share app on the PC while using Drift, or phones may find it instead.
 
+## If something goes wrong
+
+Grab the log right after it happens. Drift starts a fresh one each time it opens, so restarting first loses it.
+
+**Windows** (PowerShell): copies it to your Desktop.
+
+```powershell
+Copy-Item "$env:APPDATA\Drift\core.log" "$HOME\Desktop\drift-pc.log"
+```
+
+**Android**: plug the phone in with USB debugging on, then:
+
+```sh
+adb shell run-as app.drift cat files/core.log > drift-phone.log
+```
+
+Open an [issue](https://github.com/dan-el-7/drift/issues) with what you did and attach the logs. They include your device names and local IP addresses, so look them over before posting.
+
 ## Building
 
 You'll need Rust (stable), the .NET 10 SDK and, for the phone app, Android Studio's SDK + NDK and [`cargo-ndk`](https://github.com/bbqsrc/cargo-ndk) (`rustup target add aarch64-linux-android`).

@@ -58,6 +58,9 @@ class Transfer(
     /** When it started moving, and whether we've said it's stuck on Bluetooth. */
     var movingSince = 0L
     var warnedSlow = false
+    /** On a fast link: since when it has been slow (0 = it isn't), and whether we said so. */
+    var slowSince = 0L
+    var warnedWeak = false
     val saved = mutableStateListOf<String>()
     val savedUris = mutableStateListOf<Uri>()
     val progress get() = if (total > 0) (done.toFloat() / total).coerceIn(0f, 1f) else 0f
@@ -293,6 +296,32 @@ object Drift {
         }
     }
 
+    /**
+    * A fast link that stays slow (under 8 MB/s for 10 s, on a big enough file): usually distance. On a
+    * hotspot, Wi-Fi 6 mode can do it too (measured: ~3 MB/s on Wi-Fi 6, 82 MB/s on Wi-Fi 5).
+    */
+    private fun checkSlowLink(t: Transfer) {
+        if (t.warnedWeak || t.state != TState.Xfer || t.total < 200_000_000) return
+        val m = t.medium ?: return
+        if (m == "bluetooth") return
+        val now = System.currentTimeMillis()
+        if (t.bps >= 8_000_000 || t.bps <= 0f) { t.slowSince = 0L; return }
+        if (t.slowSince == 0L) { t.slowSince = now; return }
+        if (now - t.slowSince < 10_000) return
+        t.warnedWeak = true
+        val hotspot = m == "same_hotspot" || m == "hotspot" || hotspotOn()
+        notice = Notice(
+            "Slow link: you may be too far from ${t.peer}",
+            "Move the devices closer." + if (hotspot) " (On a hotspot, Wi-Fi 6 can slow it down too: set the hotspot to Wi-Fi 5.)" else "",
+            lasting = true,
+            action = if (hotspot) "Hotspot" to {
+                notice = null
+                runCatching { app.startActivity(Intent("android.settings.TETHER_SETTINGS").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                Unit
+            } else null,
+        )
+    }
+
     /** Our hotspot is up: a Wi-Fi interface with an address that isn't a Wi-Fi network we joined. */
     private fun hotspotOn(): Boolean = runCatching {
         val cm = app.getSystemService(android.net.ConnectivityManager::class.java)
@@ -431,6 +460,7 @@ object Drift {
                 it.done = e.optLong("done"); it.total = maxOf(it.total, e.optLong("total")); it.bps = e.optDouble("bps", 0.0).toFloat()
                 if (it.state == TState.Waiting || it.state == TState.Request) it.state = TState.Xfer
                 checkStuckOnBluetooth(it)
+                checkSlowLink(it)
             }
             "text" -> find(share)?.text = e.optString("text")
             "saved" -> {

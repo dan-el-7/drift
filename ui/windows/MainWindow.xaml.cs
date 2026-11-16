@@ -51,6 +51,8 @@ public sealed partial class MainWindow : Window
         public List<string>? SendPaths; // outgoing: what was sent (Try again after a failure)
         public long MovingSinceMs;       // when it started moving (to notice it's stuck on Bluetooth)
         public bool WarnedSlow;
+        public long SlowSinceMs;         // on a fast link: since when it has been slow (0 = it isn't)
+        public bool WarnedWeak;
         public bool IsLink => TextKind == "url" && TextBody is { } u && (u.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || u.StartsWith("https://", StringComparison.OrdinalIgnoreCase));
         public long EndedMs;
         public double P => Total > 0 ? Math.Clamp((double)Done / Total, 0, 1) : 0;
@@ -596,6 +598,20 @@ public sealed partial class MainWindow : Window
             if (now - t.MovingSinceMs < 12_000) continue;
             t.WarnedSlow = true;
             ShowNotice("Stuck on Bluetooth", $"No faster link to {t.Peer}. Turn Wi-Fi on there (no network needed), and its hotspot off, or connect this PC to that hotspot.", 12000);
+        }
+        // a fast link that stays slow (under 8 MB/s for 10 s, on a big enough file): usually distance;
+        // on the phone's hotspot, its Wi-Fi 6 mode can do it too (measured: ~3 MB/s vs 82 MB/s on Wi-Fi 5)
+        foreach (var t in _transfers)
+        {
+            if (t.WarnedWeak || t.State != TState.Xfer || t.Size < 200_000_000 || t.Medium == "bluetooth") continue;
+            var now = _clock.ElapsedMilliseconds;
+            if (t.Bps >= 8_000_000 || t.Bps <= 0) { t.SlowSinceMs = 0; continue; }
+            if (t.SlowSinceMs == 0) { t.SlowSinceMs = now; continue; }
+            if (now - t.SlowSinceMs < 10_000) continue;
+            t.WarnedWeak = true;
+            var hotspot = t.Medium is "same_hotspot" or "hotspot";
+            ShowNotice($"Slow link: you may be too far from {t.Peer}",
+                "Move the devices closer." + (hotspot ? " (On the phone's hotspot, Wi-Fi 6 can slow it down too: set the hotspot to Wi-Fi 5.)" : ""), 12000);
         }
     }
 
