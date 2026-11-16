@@ -92,7 +92,6 @@ public sealed partial class MainWindow : Window
     private readonly List<Transfer> _transfers = new();
     private List<string> _sendPaths = new();
     private (string kind, string body)? _sendText; // a link or some text to send instead of files
-    private string? _clipLink;                     // a link on the clipboard (Home offers to send it)
 
     [DllImport("user32.dll")] private static extern uint GetDpiForWindow(nint hwnd);
 
@@ -120,7 +119,6 @@ public sealed partial class MainWindow : Window
             _ = PasteToSend();
         };
         Root.KeyboardAccelerators.Add(paste);
-        Activated += (_, e) => { if (e.WindowActivationState != WindowActivationState.Deactivated) _ = CheckClipboard(); };
         if (core is MockCore mock)
         {
             // Dev: Ctrl+1 a phone sends a photo, Ctrl+2 an album.
@@ -446,11 +444,10 @@ public sealed partial class MainWindow : Window
         {
             case Route.Home:
                 h = _everyone ? $"Visible as {_s.Name}" : "Hidden";
-                p = !_everyone ? "Only you can send from here · drop files to send"
-                    : _s.AlwaysVisible ? "Everyone nearby can see you · drop files to send"
-                    : $"Everyone can see you for {Clock(_visLeft)} · drop files to send";
+                p = !_everyone ? "Only you can send from here · drop or paste to send"
+                    : _s.AlwaysVisible ? "Everyone nearby can see you · drop or paste to send"
+                    : $"Everyone can see you for {Clock(_visLeft)} · drop or paste to send";
                 acts.Add(Pill("Send files", true, () => _ = PickFiles()));
-                if (_clipLink is { } cl) acts.Add(Pill("Send link", false, () => ChooseDeviceText("url", cl)));
                 if (!_everyone) acts.Add(Pill("Be visible", false, () => SetEveryone(true)));
                 break;
             case Route.Devices:
@@ -597,9 +594,11 @@ public sealed partial class MainWindow : Window
             if (t.WarnedSlow || t.State != TState.Xfer || t.Size < 4_000_000 || t.Medium != "bluetooth") continue;
             var now = _clock.ElapsedMilliseconds;
             if (t.MovingSinceMs == 0) { t.MovingSinceMs = now; continue; }
-            if (now - t.MovingSinceMs < 12_000) continue;
+            // a first Wi-Fi Direct link waits on a tap on the phone (and Windows' search): give it time
+            if (now - t.MovingSinceMs < 20_000) continue;
             t.WarnedSlow = true;
-            ShowNotice("Stuck on Bluetooth", $"No faster link to {t.Peer}. Turn Wi-Fi on there (no network needed), and its hotspot off, or connect this PC to that hotspot.", 12000);
+            ShowNotice("Still on Bluetooth",
+                $"If {t.Peer} asks to connect, accept it for a direct link. Otherwise turn Wi-Fi on there (no network needed) and its hotspot off, or connect this PC to that hotspot.", 14000);
         }
         // a fast link that stays slow (under 8 MB/s for 10 s, on a big enough file): usually distance;
         // on the phone's hotspot, its Wi-Fi 6 mode can do it too (measured: ~3 MB/s vs 82 MB/s on Wi-Fi 5)
@@ -1617,21 +1616,6 @@ public sealed partial class MainWindow : Window
             }
         }
         catch { }
-    }
-
-    /// When Drift comes to the front: is there a link on the clipboard to offer?
-    private async Task CheckClipboard()
-    {
-        string? link = null;
-        try
-        {
-            var c = Clipboard.GetContent();
-            if (c.Contains(StandardDataFormats.Text)) { var t = (await c.GetTextAsync()).Trim(); if (t.Length < 2048 && IsWebLink(t)) link = t; }
-        }
-        catch { }
-        if (link == _clipLink) return;
-        _clipLink = link;
-        if (_route == Route.Home) RenderFooter(false);
     }
 
     private void StartChoosing()

@@ -283,7 +283,7 @@ object Drift {
         if (t.medium != null && t.medium != "bluetooth") return
         val now = System.currentTimeMillis()
         if (t.movingSince == 0L) { t.movingSince = now; return }
-        if (now - t.movingSince < 12_000) return
+        if (now - t.movingSince < 20_000) return // a first Wi-Fi Direct link waits on a tap here
         t.warnedSlow = true
         val wifi = app.getSystemService(WifiManager::class.java)
         fun open(action: String) = runCatching { app.startActivity(Intent(action).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
@@ -292,7 +292,7 @@ object Drift {
                 lasting = true, action = "Turn on" to { notice = null; open(Settings.Panel.ACTION_WIFI) })
             hotspotOn() -> Notice("Your hotspot is on", "It blocks a direct link, so this is on Bluetooth. Turn it off, or connect the PC to it.",
                 lasting = true, action = "Hotspot" to { notice = null; if (open("android.settings.TETHER_SETTINGS").isFailure) open(Settings.ACTION_WIRELESS_SETTINGS) })
-            else -> Notice("Stuck on Bluetooth", "No faster link to ${t.peer}. Check Wi-Fi is on on both devices.", lasting = true)
+            else -> Notice("Still on Bluetooth", "If you're asked to connect to ${t.peer}, accept it for a direct link. Otherwise check Wi-Fi is on on both devices.", lasting = true)
         }
     }
 
