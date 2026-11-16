@@ -54,6 +54,12 @@ if ($LASTEXITCODE) { throw "vpk pack failed" }
 Get-ChildItem $releases | Select-Object Name, @{ n = "MB"; e = { [math]::Round($_.Length / 1MB, 1) } }
 if ($Publish) {
     Write-Host "upload: GitHub release v$Version"
-    vpk upload github --repoUrl $repo --token $token --outputDir $releases --publish --releaseName "Drift $Version" --tag "v$Version"
-    if ($LASTEXITCODE) { throw "vpk upload failed" }
+    # gh, not `vpk upload` (it hung mid-upload once): the same files the updater reads
+    Push-Location $releases
+    gh release create "v$Version" --repo $repo --title "Drift $Version" --generate-notes `
+        releases.win.json RELEASES assets.win.json "Drift-$Version-full.nupkg" Drift-win-Setup.exe Drift-win-Portable.zip `
+        (Get-ChildItem "Drift-$Version-delta.nupkg" -ErrorAction SilentlyContinue)
+    $failed = $LASTEXITCODE
+    Pop-Location
+    if ($failed) { throw "gh release create failed" }
 }
