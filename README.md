@@ -40,7 +40,7 @@ Copy-Item "$env:APPDATA\Drift\core.log" "$HOME\Desktop\drift-pc.log"
 adb shell run-as app.drift cat files/core.log > drift-phone.log
 ```
 
-Open an [issue](https://github.com/dan-el-7/drift/issues) with what you did and attach the logs. They include your device names and local IP addresses, so look them over before posting.
+Open an [issue](https://github.com/dan-el-7/drift/issues) with what you did and attach the logs. They include your device names and local IP addresses, so look them over before posting. (You can tap the button on the bottom left to share logs on the Android client with ease, desktop logs live in %APPDATA%\Drift\core.log for Windows)
 
 ## Building
 
