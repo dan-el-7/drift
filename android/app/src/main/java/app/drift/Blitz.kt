@@ -26,8 +26,9 @@ import androidx.compose.ui.graphics.drawscope.Stroke
  * Blitz (easter egg): seven quick taps on the centre during a transfer draw a lightning bolt once, it
  * flashes, and a Blitz button appears. Blitz frees the radio of whichever side is splitting its airtime
  * between two networks (measured: a phone on its own Wi-Fi drops its hotspot to 2.4 GHz; a PC on its Wi-Fi
- * plus a Wi-Fi Direct link time-shares two channels). Android won't let an app turn Wi-Fi off, so on the
- * phone Blitz opens the Wi-Fi panel and says why.
+ * plus a Wi-Fi Direct link time-shares two channels). Android won't let an app change Wi-Fi, so on the
+ * phone Blitz opens Wi-Fi settings and says what to do: on its own hotspot, turn Wi-Fi off; on Wi-Fi
+ * Direct, only leave the network (Wi-Fi off would end Wi-Fi Direct too).
  */
 object Blitz {
     /** Shares with Blitz unlocked. */
@@ -58,9 +59,15 @@ object Blitz {
         when {
             !direct -> Drift.notice = Notice("Blitz needs a direct link", "This transfer runs over ${t.medium ?: "Bluetooth"}; nothing to free up.")
             !onWifi -> Drift.notice = Notice("Already at full speed", "Your phone isn't splitting its radio with another network.")
-            else -> {
-                Drift.notice = Notice("Turn Wi-Fi off for this transfer", "Your phone stops sharing its radio with your network, so this link gets all of it (5 GHz). Turn it back on after.", lasting = true)
+            // our own hotspot doesn't need Wi-Fi: turning it off frees the radio for the hotspot
+            t.medium in setOf("same_hotspot", "hotspot") -> {
+                Drift.notice = Notice("Turn Wi-Fi off for this transfer", "Your hotspot keeps running and gets the whole radio (5 GHz). Turn Wi-Fi back on after.", lasting = true)
                 runCatching { ctx.startActivity(Intent(Settings.Panel.ACTION_WIFI).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+            }
+            // Wi-Fi Direct needs Wi-Fi on: only leave the network (turning Wi-Fi off ends this link)
+            else -> {
+                Drift.notice = Notice("Disconnect from your Wi-Fi network", "Keep Wi-Fi on: Wi-Fi Direct needs it. Just leave the network for this transfer, so the direct link gets the whole radio.", lasting = true)
+                runCatching { ctx.startActivity(Intent(Settings.ACTION_WIFI_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
             }
         }
     }
