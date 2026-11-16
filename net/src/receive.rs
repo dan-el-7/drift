@@ -35,8 +35,6 @@ pub struct ReceiveConfig {
     /// Notified when the user cancels on the PC: the phone is told (sharing CANCEL) and the
     /// connection closes cleanly.
     pub cancel: Option<Arc<tokio::sync::Notify>>,
-    /// The phone reached us over the local network (not Bluetooth).
-    pub bootstrap_lan: bool,
 }
 
 /// What the connection is currently running over.
@@ -82,8 +80,7 @@ fn sanitize(name: &str) -> String {
 
 /// The receive ladder for this peer: for a Drift peer, the phone-hosted Wi-Fi Direct link, then LAN,
 /// then whatever else the configured ladder has.
-/// `direct_ok`: Wi-Fi Direct is worth trying (see `Platform::direct_known`).
-pub(crate) fn drift_ladder(configured: &[Rung], peer: Option<&drift_core::endpoint::EndpointInfo>, single_hop: bool, direct_ok: bool) -> Vec<Rung> {
+pub(crate) fn drift_ladder(configured: &[Rung], peer: Option<&drift_core::endpoint::EndpointInfo>, single_hop: bool) -> Vec<Rung> {
     let Some(info) = peer.filter(|i| i.drift_version().is_some()) else { return configured.to_vec() };
     // The phone's Wi-Fi Direct group first, then LAN hosted by the phone (fails silently where the
     // network keeps devices apart), then the rest. The phone hosts both: it can take inbound
@@ -98,7 +95,6 @@ pub(crate) fn drift_ladder(configured: &[Rung], peer: Option<&drift_core::endpoi
     } else {
         (configured.contains(&Rung::Lan).then_some(Rung::Lan), None)
     };
-    let direct = direct.filter(|_| direct_ok);
     let mut front: Vec<Rung> = if single_hop { lan_first.into_iter().chain(direct).collect() } else { direct.into_iter().chain(lan_first).collect() };
     // No prompts between Drift devices: the hotspot rungs make the phone ask before it joins a network
     // (Android's sheet). If Wi-Fi Direct and LAN both fail, the share stays on Bluetooth.
@@ -163,15 +159,9 @@ pub async fn run(
     if single_hop {
         tracing::info!(peer_ip = ?peer.ip, "on the same hotspot as the peer: LAN first");
     }
-    // Already on the local network with a device we've never had a Wi-Fi Direct link with: a first
-    // pairing needs a confirmation on both devices and can disturb the connection we're on, so stay
-    // on the network (it works now; Direct gets its chance on a Bluetooth start).
-    let peer_name = peer.info.as_ref().and_then(|i| i.name.clone()).unwrap_or_default();
-    let direct_ok = !cfg.bootstrap_lan || platform.direct_known(&peer_name);
-    if !direct_ok {
-        tracing::info!(peer = %peer_name, "first Wi-Fi Direct with this device; staying on the local network");
-    }
-    let ladder = drift_ladder(&cfg.ladder, peer.info.as_ref(), single_hop, direct_ok);
+    // On a LAN start the file is already moving (the sender doesn't hold on LAN), so Wi-Fi Direct is
+    // tried alongside and takes over mid-share when it comes up; if it fails, the share stays on LAN.
+    let ladder = drift_ladder(&cfg.ladder, peer.info.as_ref(), single_hop);
     let (mut upgrader, mut upgrade_events) =
         Upgrader::new(
             ladder,
@@ -267,9 +257,6 @@ pub async fn run(
                     // Setup time is only known on success; capture it before handing over.
                     let setup = match &ev { crate::upgrade::UpgradeEvent::Ready { setup, .. } => Some(*setup), _ => None };
                     if let Some(rung) = upgrader.on_event(ev) {
-                        if matches!(rung, Rung::PhoneHosted | Rung::PcHostedDirect) {
-                            platform_for_cleanup.direct_worked(&peer_name);
-                        }
                         let medium = if single_hop && matches!(rung, Rung::Lan | Rung::PeerHostedLan) { Medium::SameHotspot } else { Medium::Upgraded(rung) };
                         let _ = events.send(ReceiveEvent::MediumChanged { medium, setup });
                     }
@@ -390,18 +377,3 @@ pub async fn run(
     result
 }
 
-#[cfg(test)]
-mod ladder_tests {
-    use super::*;
-    use drift_core::endpoint::{DeviceType, EndpointInfo};
-
-    #[test]
-    fn first_direct_is_skipped_when_told_to() {
-        let phone = EndpointInfo::new_drift("Pixel", DeviceType::Phone);
-        let all = drift_ladder(&[Rung::Lan], Some(&phone), false, true);
-        assert_eq!(all.first(), Some(&Rung::PhoneHosted));
-        let lan_only = drift_ladder(&[Rung::Lan], Some(&phone), false, false);
-        assert!(!lan_only.contains(&Rung::PhoneHosted), "{lan_only:?}");
-        assert_eq!(lan_only.first(), Some(&Rung::PeerHostedLan));
-    }
-}

@@ -67,14 +67,6 @@ impl Platform for WinPlatform {
         routes::remove_stale()
     }
 
-    fn direct_known(&self, peer_name: &str) -> bool {
-        wfd::direct_known(peer_name)
-    }
-
-    fn direct_worked(&self, peer_name: &str) {
-        wfd::remember_direct_peer(peer_name)
-    }
-
     fn internet_gateway(&self) -> Option<std::net::Ipv4Addr> {
         routes::internet_gateway()
     }

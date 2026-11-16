@@ -39,8 +39,6 @@ pub struct ConnectedOut {
     /// We reached the receiver over the local network, not Bluetooth (set by the caller). That link
     /// is already fast: file data goes at once (no F16 hold) and an upgrade, if any, happens mid-way.
     pub bootstrap_lan: bool,
-    /// The receiver's Drift name (set by the caller): which devices Wi-Fi Direct has worked with.
-    pub peer_name: String,
     pub rd: BoxRead,
     pub wr: BoxWrite,
 }
@@ -102,7 +100,7 @@ where
     if !accepted {
         bail!("phone rejected the connection");
     }
-    Ok(ConnectedOut { handshake, peer_drift: false, bootstrap_lan: false, peer_name: String::new(), rd, wr })
+    Ok(ConnectedOut { handshake, peer_drift: false, bootstrap_lan: false, rd, wr })
 }
 
 #[derive(Debug)]
@@ -370,7 +368,6 @@ pub async fn run_with(
     upgrader.allow_disruptive(); // only ever runs after the user accepted
     upgrader.set_peer_drift(conn.peer_drift);
     let peer_drift = conn.peer_drift;
-    let (bootstrap_lan, peer_name) = (conn.bootstrap_lan, conn.peer_name.clone());
     let ka = writer.clone();
     let keepalive = tokio::spawn(async move {
         let mut seq = 0u32;
@@ -461,17 +458,6 @@ pub async fn run_with(
                                 }
                                 // our hosted group's joiner says where to connect (reverse, Drift peers)
                                 BwuEvent::UpgradePathAvailable if upgrader.wants_path() => upgrader.on_peer_frame(&b),
-                                // already on the local network, and Wi-Fi Direct has never worked with this
-                                // device: a first pairing needs a confirmation on both devices and can
-                                // disturb the link we're on. Decline; the share carries on here.
-                                BwuEvent::UpgradePathAvailable
-                                    if bootstrap_lan
-                                        && b.upgrade_path_info.as_ref().and_then(|i| i.medium) == Some(UpiMedium::WifiDirect as i32)
-                                        && !join_platform.direct_known(&peer_name) =>
-                                {
-                                    tracing::info!(peer = %peer_name, "first Wi-Fi Direct with this device; staying on the local network");
-                                    writer.send(upgrade_failure(Some(UpiMedium::WifiDirect as i32)));
-                                }
                                 BwuEvent::UpgradePathAvailable => {
                                     let info = b.upgrade_path_info.clone().unwrap_or_default();
                                     tracing::info!(medium = ?info.medium, "phone offers upgrade path");
@@ -533,9 +519,6 @@ pub async fn run_with(
                     match r {
                         Ok((rd, wr, enc, label, guard, setup)) => {
                             _joined = guard;
-                            if label == Rung::PhoneHosted.label() {
-                                join_platform.direct_worked(&peer_name);
-                            }
                             tracing::info!(medium = label, ?setup, encrypted = enc, "upgrade channel ready; handing over");
                             writer.pause_for(wr, enc);
                             writer.send_on_prior(payload::bwu_event(BwuEvent::LastWriteToPriorChannel));

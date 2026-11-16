@@ -373,34 +373,6 @@ impl Drop for CancelOnDrop {
     }
 }
 
-fn peers_file() -> Option<std::path::PathBuf> {
-    Some(std::path::PathBuf::from(std::env::var_os("APPDATA")?).join("Drift").join("direct-peers.txt"))
-}
-
-/// A Wi-Fi Direct link with this device has worked before: by its Drift name, or (devices whose
-/// Wi-Fi Direct name is their Drift name) a remembered P2P id.
-pub fn direct_known(name: &str) -> bool {
-    if name.is_empty() {
-        return false;
-    }
-    let listed = peers_file()
-        .and_then(|p| std::fs::read_to_string(p).ok())
-        .is_some_and(|t| t.lines().any(|l| l.trim().eq_ignore_ascii_case(name)));
-    listed || known_id(name).is_some()
-}
-
-pub fn remember_direct_peer(name: &str) {
-    if name.is_empty() || direct_known(name) {
-        return;
-    }
-    let Some(path) = peers_file() else { return };
-    let mut text = std::fs::read_to_string(&path).unwrap_or_default();
-    text.push_str(name);
-    text.push('\n');
-    let _ = std::fs::create_dir_all(path.parent().unwrap());
-    let _ = std::fs::write(&path, text);
-}
-
 fn known_id(name: &str) -> Option<HSTRING> {
     let text = std::fs::read_to_string(ids_file()?).ok()?;
     text.lines().filter_map(|l| l.split_once('\t')).find(|(n, _)| n.eq_ignore_ascii_case(name)).map(|(_, id)| HSTRING::from(id))

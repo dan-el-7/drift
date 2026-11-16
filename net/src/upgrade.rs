@@ -129,15 +129,6 @@ pub trait Platform: Send + Sync + 'static {
         Box::pin(async { bail!("joining a Wi-Fi network is not supported on this platform") })
     }
     /// The next hop our internet traffic takes (to tell "we're on that phone's hotspot"), if known.
-    /// Has a Wi-Fi Direct link with this device (its Drift name) worked before? A first one needs a
-    /// confirmation on both devices, so a share that's already on the local network skips it.
-    fn direct_known(&self, _peer_name: &str) -> bool {
-        true
-    }
-
-    /// A Wi-Fi Direct link with this device (its Drift name) just worked: remember it.
-    fn direct_worked(&self, _peer_name: &str) {}
-
     fn internet_gateway(&self) -> Option<Ipv4Addr> {
         None
     }
