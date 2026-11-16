@@ -55,6 +55,9 @@ class Transfer(
     var error by mutableStateOf<String?>(null)
     /** Outgoing: what was sent, so a failed send can be tried again without finding it again. */
     var sent: Outbox? = null
+    /** When it started moving, and whether we've said it's stuck on Bluetooth. */
+    var movingSince = 0L
+    var warnedSlow = false
     val saved = mutableStateListOf<String>()
     val savedUris = mutableStateListOf<Uri>()
     val progress get() = if (total > 0) (done.toFloat() / total).coerceIn(0f, 1f) else 0f
@@ -267,6 +270,42 @@ object Drift {
         }
     }.start()
 
+    /**
+     * A transfer still on Bluetooth 12 s after it started moving (and big enough to matter): say why
+     * once, with the fix. Usually the phone's Wi-Fi is off (Wi-Fi Direct goes with it) or its hotspot
+     * is on (this phone can't run a hotspot and a Wi-Fi Direct group at once).
+     */
+    private fun checkStuckOnBluetooth(t: Transfer) {
+        if (t.warnedSlow || t.state != TState.Xfer || t.total < 4_000_000) return
+        if (t.medium != null && t.medium != "bluetooth") return
+        val now = System.currentTimeMillis()
+        if (t.movingSince == 0L) { t.movingSince = now; return }
+        if (now - t.movingSince < 12_000) return
+        t.warnedSlow = true
+        val wifi = app.getSystemService(WifiManager::class.java)
+        fun open(action: String) = runCatching { app.startActivity(Intent(action).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+        notice = when {
+            wifi?.isWifiEnabled == false -> Notice("Wi-Fi is off", "This transfer is stuck on Bluetooth. Turn Wi-Fi on for a direct link; you don't need to join a network.",
+                lasting = true, action = "Turn on" to { notice = null; open(Settings.Panel.ACTION_WIFI) })
+            hotspotOn() -> Notice("Your hotspot is on", "It blocks a direct link, so this is on Bluetooth. Turn it off, or connect the PC to it.",
+                lasting = true, action = "Hotspot" to { notice = null; if (open("android.settings.TETHER_SETTINGS").isFailure) open(Settings.ACTION_WIRELESS_SETTINGS) })
+            else -> Notice("Stuck on Bluetooth", "No faster link to ${t.peer}. Check Wi-Fi is on on both devices.", lasting = true)
+        }
+    }
+
+    /** Our hotspot is up: a Wi-Fi interface with an address that isn't a Wi-Fi network we joined. */
+    private fun hotspotOn(): Boolean = runCatching {
+        val cm = app.getSystemService(android.net.ConnectivityManager::class.java)
+        @Suppress("DEPRECATION")
+        val joined = cm.allNetworks.filter { cm.getNetworkCapabilities(it)?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) == true }
+            .flatMap { cm.getLinkProperties(it)?.linkAddresses.orEmpty().map { a -> a.address } }.toSet()
+        java.net.NetworkInterface.getNetworkInterfaces().toList().any { ni ->
+            ni.isUp && !ni.isLoopback && !ni.name.startsWith("p2p") &&
+                (ni.name.startsWith("wlan") || ni.name.startsWith("ap") || ni.name.startsWith("swlan")) &&
+                ni.inetAddresses.toList().any { it is java.net.Inet4Address && it !in joined }
+        }
+    }.getOrDefault(false)
+
     /** "0.2.10" > "0.2.9": compared number by number. */
     private fun newer(a: String, b: String): Boolean {
         val x = a.split('.').map { it.toIntOrNull() ?: 0 }
@@ -391,6 +430,7 @@ object Drift {
             "progress" -> find(share)?.let {
                 it.done = e.optLong("done"); it.total = maxOf(it.total, e.optLong("total")); it.bps = e.optDouble("bps", 0.0).toFloat()
                 if (it.state == TState.Waiting || it.state == TState.Request) it.state = TState.Xfer
+                checkStuckOnBluetooth(it)
             }
             "text" -> find(share)?.text = e.optString("text")
             "saved" -> {

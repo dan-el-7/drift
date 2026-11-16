@@ -49,6 +49,8 @@ public sealed partial class MainWindow : Window
         public string? TextKind;   // url | text | address | phone
         public string? TextBody;   // what arrived
         public List<string>? SendPaths; // outgoing: what was sent (Try again after a failure)
+        public long MovingSinceMs;       // when it started moving (to notice it's stuck on Bluetooth)
+        public bool WarnedSlow;
         public bool IsLink => TextKind == "url" && TextBody is { } u && (u.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || u.StartsWith("https://", StringComparison.OrdinalIgnoreCase));
         public long EndedMs;
         public double P => Total > 0 ? Math.Clamp((double)Done / Total, 0, 1) : 0;
@@ -581,6 +583,21 @@ public sealed partial class MainWindow : Window
     }
 
     private static string Rate(double bps) => bps >= 10e6 ? $"{bps / 1e6:0} MB/s" : $"{bps / 1e6:0.0} MB/s";
+
+    /// A transfer still on Bluetooth 12 s after it started moving (and big enough to matter): say why,
+    /// once. From here we can't see the phone's Wi-Fi or hotspot, so name both likely causes.
+    private void CheckStuckOnBluetooth()
+    {
+        foreach (var t in _transfers)
+        {
+            if (t.WarnedSlow || t.State != TState.Xfer || t.Size < 4_000_000 || t.Medium != "bluetooth") continue;
+            var now = _clock.ElapsedMilliseconds;
+            if (t.MovingSinceMs == 0) { t.MovingSinceMs = now; continue; }
+            if (now - t.MovingSinceMs < 12_000) continue;
+            t.WarnedSlow = true;
+            ShowNotice("Stuck on Bluetooth", $"No faster link to {t.Peer}. Turn Wi-Fi on there (no network needed), and its hotspot off, or connect this PC to that hotspot.", 12000);
+        }
+    }
 
     private static bool IsDirect(string medium) => medium is "hotspot" or "direct" or "phone_hosted";
 
@@ -1745,6 +1762,7 @@ public sealed partial class MainWindow : Window
         {
             _tick = 0;
             if (_route == Route.Transfer && f != null) Subline.Text = XferLine(f);
+            CheckStuckOnBluetooth();
             if (_route == Route.Home) RenderFooter(false);
             if (_route == Route.Activity) { RenderSheet(); RenderFooter(false); }
             RenderDock();
