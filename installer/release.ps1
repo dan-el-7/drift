@@ -6,7 +6,11 @@
 #
 # Output: dist/releases/Drift-win-Setup.exe, Drift-win-Portable.zip (+ update packages).
 # -Clean wipes dist/releases first (rebuilding the same version); real releases keep history for updates.
-param([string]$Version = "0.1.0", [switch]$Clean)
+# -Publish fetches the previous release from GitHub first (for delta updates), then uploads this one as
+# release v<Version> (installers, packages and releases.win.json: what the app's updater reads).
+# Needs `gh auth login`. The Android APK is added to the same release separately.
+param([string]$Version = "0.1.0", [switch]$Clean, [switch]$Publish)
+$repo = "https://github.com/dan-el-7/drift"
 $ErrorActionPreference = "Stop"
 $root = Split-Path $PSScriptRoot
 Set-Location $root
@@ -33,6 +37,12 @@ if ($LASTEXITCODE) { throw "splash render failed" }
 
 $releases = Join-Path (Join-Path $root "dist") "releases"
 if ($Clean -and (Test-Path $releases)) { Remove-Item $releases -Recurse -Force }
+if ($Publish) {
+    $token = (gh auth token).Trim()
+    Write-Host "previous release (for delta updates)"
+    vpk download github --repoUrl $repo --token $token --outputDir $releases
+    if ($LASTEXITCODE) { Write-Warning "no previous release to build a delta from" }
+}
 Write-Host "pack: installer + portable"
 vpk pack --packId Drift --packVersion $Version --packDir $pub --mainExe Drift.exe `
     --packTitle Drift --packAuthors Drift `
@@ -42,3 +52,8 @@ vpk pack --packId Drift --packVersion $Version --packDir $pub --mainExe Drift.ex
     --outputDir $releases
 if ($LASTEXITCODE) { throw "vpk pack failed" }
 Get-ChildItem $releases | Select-Object Name, @{ n = "MB"; e = { [math]::Round($_.Length / 1MB, 1) } }
+if ($Publish) {
+    Write-Host "upload: GitHub release v$Version"
+    vpk upload github --repoUrl $repo --token $token --outputDir $releases --publish --releaseName "Drift $Version" --tag "v$Version"
+    if ($LASTEXITCODE) { throw "vpk upload failed" }
+}

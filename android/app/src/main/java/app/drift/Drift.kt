@@ -30,7 +30,7 @@ enum class TState { Request, Waiting, Xfer, Done, Failed, Declined, Cancelled }
 data class FileItem(val name: String, val size: Long)
 data class Device(val id: String, val name: String, val kind: String, val drift: Boolean = false)
 data class TrustedDevice(val id: String, val name: String, val auto: Boolean)
-data class Notice(val title: String, val detail: String?, val lasting: Boolean = false)
+data class Notice(val title: String, val detail: String?, val lasting: Boolean = false, val action: Pair<String, () -> Unit>? = null)
 
 class Transfer(
     val share: Long,
@@ -53,6 +53,8 @@ class Transfer(
     var medium by mutableStateOf<String?>(null)
     var text by mutableStateOf<String?>(null)
     var error by mutableStateOf<String?>(null)
+    /** Outgoing: what was sent, so a failed send can be tried again without finding it again. */
+    var sent: Outbox? = null
     val saved = mutableStateListOf<String>()
     val savedUris = mutableStateListOf<Uri>()
     val progress get() = if (total > 0) (done.toFloat() / total).coerceIn(0f, 1f) else 0f
@@ -118,6 +120,7 @@ object Drift {
             ?.takeIf { u -> app.contentResolver.persistedUriPermissions.any { it.uri == u && it.isWritePermission } }
         val c = Core { e -> main.post { onEvent(e) } }
         core = c
+        checkForUpdate()
         multicast = (app.getSystemService(Context.WIFI_SERVICE) as WifiManager)
             .createMulticastLock("drift-mdns").apply { setReferenceCounted(false); acquire() }
         downloadDir.mkdirs()
@@ -240,6 +243,41 @@ object Drift {
         t.state = if (accept) TState.Xfer else TState.Declined
     }
 
+    /**
+     * Is there a newer Drift on GitHub? Looks once per launch; if so, says so and lets the user decide.
+     * Update opens the APK's download in the browser and Android's installer takes it from there.
+     */
+    private fun checkForUpdate() = Thread {
+        runCatching {
+            val c = java.net.URL("https://api.github.com/repos/dan-el-7/drift/releases/latest").openConnection() as java.net.HttpURLConnection
+            c.connectTimeout = 8_000; c.readTimeout = 8_000
+            c.setRequestProperty("Accept", "application/vnd.github+json")
+            val rel = JSONObject(c.inputStream.bufferedReader().use { it.readText() })
+            val latest = rel.optString("tag_name").removePrefix("v")
+            val ours = app.packageManager.getPackageInfo(app.packageName, 0).versionName ?: return@runCatching
+            val apk = rel.optJSONArray("assets").items { it }.firstOrNull { it.optString("name").endsWith(".apk") }
+                ?.optString("browser_download_url") ?: return@runCatching
+            if (newer(latest, ours)) main.post {
+                notice = Notice("Drift $latest is available", "You have $ours. Update now, or keep this version for now.", lasting = true,
+                    action = "Update" to {
+                        notice = null
+                        runCatching { app.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(apk)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                    })
+            }
+        }
+    }.start()
+
+    /** "0.2.10" > "0.2.9": compared number by number. */
+    private fun newer(a: String, b: String): Boolean {
+        val x = a.split('.').map { it.toIntOrNull() ?: 0 }
+        val y = b.split('.').map { it.toIntOrNull() ?: 0 }
+        for (i in 0 until maxOf(x.size, y.size)) {
+            val d = x.getOrElse(i) { 0 } - y.getOrElse(i) { 0 }
+            if (d != 0) return d > 0
+        }
+        return false
+    }
+
     fun cancel(t: Transfer) = cmd("cancel", "share" to t.share)
     fun untrust(id: String) = cmd("untrust", "id" to id)
 
@@ -248,6 +286,7 @@ object Drift {
     fun send(device: Device) {
         val box = outbox ?: return
         outbox = null
+        pendingBox = box
         val dir = File(app.cacheDir, "send/${System.nanoTime()}").apply { mkdirs() }
         val paths = JSONArray()
         for (uri in box.uris) {
@@ -269,6 +308,7 @@ object Drift {
     private val openFds = mutableListOf<ParcelFileDescriptor>()
     private var pendingTexts = 0
     private var pendingKind: String? = null
+    private var pendingBox: Outbox? = null
 
     /** "Send <this>": the file's name, "3 files", "a link" or "some text" (as the desktop's heading). */
     fun outboxTitle(): String {
@@ -341,6 +381,7 @@ object Drift {
             "waiting" -> {
                 val t = find(share) ?: Transfer(share, false, e.optString("name"), e.optJSONArray("files").items { FileItem(it.optString("name"), it.optLong("size")) }, null, texts = pendingTexts, textKind = pendingKind).also {
                     it.state = TState.Waiting
+                    it.sent = pendingBox
                     transfers.add(0, it)
                 }
                 e.optString("pin").ifEmpty { null }?.let { t.pin = it }

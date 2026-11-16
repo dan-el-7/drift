@@ -184,8 +184,11 @@ async fn stalled_link_is_detected_and_part_file_kept() {
     }
     assert!(stalled, "receiver never reported the stall");
     assert!(receiver.await.unwrap().is_err(), "a stalled share should end with an error");
-    let parts: Vec<_> = std::fs::read_dir(&out).unwrap().map(|e| e.unwrap().file_name()).collect();
-    assert!(parts.iter().any(|n| n.to_string_lossy().ends_with(".part")), "partial file should be kept for resume: {parts:?}");
+    let parts: Vec<_> = std::fs::read_dir(&out).unwrap().map(|e| e.unwrap().path()).collect();
+    let part = parts.iter().find(|p| p.to_string_lossy().ends_with(".part")).unwrap_or_else(|| panic!("partial file should be kept for resume: {parts:?}"));
+    // what arrived before the stall is on disk (not lost in the write buffer)
+    let len = std::fs::metadata(part).unwrap().len();
+    assert!(len > 0 && len < 4_000_000, "partial file should hold the bytes that arrived, has {len}");
 }
 
 /// Cancel mid-transfer from either side: the other side is told (sharing CANCEL), both end

@@ -188,11 +188,13 @@ private sealed interface Route {
 }
 
 private val dismissed = mutableStateListOf<Long>()
+/** Transfers sent to the background (Hide, or back): they keep running; home shows them as chips. */
+private val hidden = mutableStateListOf<Long>()
 private val finished = setOf(TState.Done, TState.Failed, TState.Declined, TState.Cancelled)
 
 private fun route(): Route {
     Drift.transfers.firstOrNull { it.state == TState.Request }?.let { return Route.Request(it) }
-    Drift.transfers.firstOrNull { it.state == TState.Waiting || it.state == TState.Xfer }?.let { return Route.Xfer(it) }
+    Drift.transfers.firstOrNull { (it.state == TState.Waiting || it.state == TState.Xfer) && it.share !in hidden }?.let { return Route.Xfer(it) }
     if (Drift.outbox != null) return Route.Pick
     Drift.transfers.firstOrNull()?.takeIf { it.state in finished && it.share !in dismissed }?.let { return Route.Done(it) }
     return Route.Home
@@ -207,10 +209,12 @@ fun DriftUi() {
     var settings by remember { mutableStateOf(false) }
     var trustedOpen by remember { mutableStateOf(false) }
     val r = route()
-    // back from picking a device cancels it; back from a finished transfer dismisses it
-    val panelPeek = rememberBackPeek(!settings && (r == Route.Pick || r is Route.Done)) {
+    // back from picking a device cancels it; back from a transfer hides it (it keeps going);
+    // back from a finished transfer dismisses it
+    val panelPeek = rememberBackPeek(!settings && (r == Route.Pick || r is Route.Done || r is Route.Xfer)) {
         when (r) {
             Route.Pick -> { Drift.outbox = null; Drift.scan(false) }
+            is Route.Xfer -> hidden += r.t.share
             is Route.Done -> dismissed += r.t.share
             else -> {}
         }
@@ -384,6 +388,7 @@ private fun Home() {
     }
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(Drift.visibility) { while (true) { now = System.currentTimeMillis(); delay(1000) } }
+    Running()
     T(Drift.name, 28.sp, weight = 600, tracking = (-0.03).em, maxLines = 1)
     val line = when (Drift.visibility) {
         Visibility.Hidden -> "Hidden"
@@ -402,15 +407,38 @@ private fun Home() {
     }
 }
 
+/** Hidden transfers that are still going, as chips (the desktop's dock); tap one to open it. */
+@Composable
+private fun Running() {
+    val running = Drift.transfers.filter { it.share in hidden && (it.state == TState.Waiting || it.state == TState.Xfer) }
+    if (running.isEmpty()) return
+    Row(Modifier.padding(bottom = 10.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        for (t in running.take(2)) {
+            val what = if (t.state == TState.Waiting) "waiting" else "${kotlin.math.floor(t.progress * 100).toInt()}%"
+            Pill("${if (t.title.length > 18) t.title.take(17) + "…" else t.title} · $what", tight = true) { hidden -= t.share }
+        }
+        if (running.size > 2) Pill("+${running.size - 2}", tight = true) { hidden -= running[2].share }
+    }
+}
+
 @Composable
 private fun Pick() {
     val p = LocalPal.current
     Drift.outbox ?: return
+    Running()
     // as on the desktop: the devices are drops on the stage, named under each one; tap one to send
     T("Send ${Drift.outboxTitle()}", 22.sp, weight = 600, tracking = (-0.02).em, maxLines = 1)
     T(if (Drift.devices.isEmpty()) "Looking for nearby devices…" else "Choose a device", 13.sp, p.g1)
+    // more files while choosing a device: they join the ones already chosen
+    val more = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        val box = Drift.outbox
+        if (uris.isNotEmpty() && box != null && box.text == null) Drift.outbox = box.copy(uris = (box.uris + uris).distinct())
+    }
     Spacer(Modifier.height(10.dp))
-    Pill("Cancel") { Drift.outbox = null; Drift.scan(false) }
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Pill("Cancel") { Drift.outbox = null; Drift.scan(false) }
+        if (Drift.outbox?.text == null) Pill("Add files") { more.launch(arrayOf("*/*")) }
+    }
 }
 
 /** The code: digits focus in one after another with a small rise, then keep floating. */
@@ -468,6 +496,8 @@ private fun Xfer(t: Transfer) {
     }
     Spacer(Modifier.height(14.dp))
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        // Hide: back to home while this keeps going (send more meanwhile, as on the desktop)
+        Pill("Hide") { hidden += t.share }
         Pill("Cancel") { Drift.cancel(t) }
         if (t.share in Blitz.unlocked && t.state == TState.Xfer) {
             val ctx = LocalContext.current
@@ -492,6 +522,10 @@ private fun Done(t: Transfer) {
     Spacer(Modifier.height(14.dp))
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Pill("Done") { dismissed += t.share }
+        // a send that failed: back to choosing a device, with the same files
+        val again = t.sent
+        if (t.state == TState.Failed && !t.incoming && again != null)
+            Pill("Try again", primary = true) { dismissed += t.share; Drift.outbox = again; Drift.scan(true) }
         if (t.state == TState.Done && t.incoming) {
             val text = t.text
             when {
@@ -715,6 +749,7 @@ private fun NoticeCard() {
             Column(Modifier.weight(1f).padding(start = 12.dp, end = 8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 T(cur.title, 14.sp, weight = 500)
                 cur.detail?.let { T(it, 12.5.sp, p.g1) }
+                cur.action?.let { (label, run) -> Spacer(Modifier.height(6.dp)); Pill(label, primary = true, tight = true) { run() } }
             }
             T("×", 18.sp, p.g1, modifier = Modifier.clip(RoundedCornerShape(50)).clickable { Drift.notice = null }.padding(horizontal = 6.dp))
         }

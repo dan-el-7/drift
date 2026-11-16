@@ -242,9 +242,10 @@ pub async fn run(
                         tracing::warn!(?medium, after = ?last_data.elapsed(), "link stalled");
                         upgrader.on_stall();
                         let _ = events.send(ReceiveEvent::Stalled { medium, after: last_data.elapsed() });
-                        // Keep the .part file for resume (don't delete it below).
-                        for (_, of) in open.drain() {
-                            drop(of.file);
+                        // Keep the .part file for resume (don't delete it below), with everything that
+                        // arrived: the writer still buffers up to 1 MiB.
+                        for (_, mut of) in open.drain() {
+                            let _ = of.file.flush().await;
                         }
                         return Err(anyhow!("link stalled"));
                     }

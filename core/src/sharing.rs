@@ -97,6 +97,8 @@ pub enum SessionError {
     OutOfOrder { id: i64, offset: i64, expected: i64 },
     #[error("file {id} exceeded its announced size {size}")]
     Oversize { id: i64, size: i64 },
+    #[error("file {id} ended at {received} of its announced {size} bytes")]
+    Truncated { id: i64, received: i64, size: i64 },
     #[error("bad sharing frame: {0}")]
     Decode(String),
 }
@@ -330,6 +332,10 @@ impl ReceiveSession {
                     out.push(Action::Event(Event::FileProgress { payload_id: id, received: f.received, total: f.file.size }));
                 }
                 if last {
+                    // the last chunk must bring the file to its announced size: a short file is a failure
+                    if f.received != f.file.size {
+                        return Err(SessionError::Truncated { id, received: f.received, size: f.file.size });
+                    }
                     out.push(Action::FileClose { payload_id: id });
                     out.extend(self.item_done());
                 }
@@ -570,6 +576,14 @@ mod tests {
         feed(&mut s, intro(&[(7, "a", 2)], &[]));
         s.accept();
         assert_eq!(s.on_frame(&file_chunk(7, 0, b"abc", false)), Err(SessionError::Oversize { id: 7, size: 2 }));
+    }
+
+    #[test]
+    fn short_file_is_not_complete() {
+        let mut s = ReceiveSession::new();
+        feed(&mut s, intro(&[(7, "a", 100)], &[]));
+        s.accept();
+        assert_eq!(s.on_frame(&file_chunk(7, 0, b"abc", true)), Err(SessionError::Truncated { id: 7, received: 3, size: 100 }));
     }
 
     #[test]

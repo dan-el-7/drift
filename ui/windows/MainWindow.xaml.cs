@@ -48,6 +48,7 @@ public sealed partial class MainWindow : Window
         public bool Drift, Trusted;  // the other side runs Drift / is a trusted Drift device
         public string? TextKind;   // url | text | address | phone
         public string? TextBody;   // what arrived
+        public List<string>? SendPaths; // outgoing: what was sent (Try again after a failure)
         public bool IsLink => TextKind == "url" && TextBody is { } u && (u.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || u.StartsWith("https://", StringComparison.OrdinalIgnoreCase));
         public long EndedMs;
         public double P => Total > 0 ? Math.Clamp((double)Done / Total, 0, 1) : 0;
@@ -102,6 +103,8 @@ public sealed partial class MainWindow : Window
         SetLook(_s.Look);
         SetupChrome();
         SetupShell();
+        // updates: Drift only says there's one (never mid-transfer); the user decides
+        _ = Shell.Updates.Run(v => _dq.TryEnqueue(() => { if (!_transfers.Any(t => t.Active)) OfferUpdate(v); }));
 
         Root.KeyboardAccelerators.Add(Accel(VirtualKey.Escape, VirtualKeyModifiers.None, () => Back()));
         // Ctrl+V sends what's copied, except while typing in a text box (that's a normal paste)
@@ -350,9 +353,9 @@ public sealed partial class MainWindow : Window
         if (_focus == t && _route is Route.Transfer or Route.Waiting or Route.Request)
         {
             if (state == TState.Done) Go(Route.Done, t);
-            else { Go(Route.Home); Toast(msg); }
+            else { Go(Route.Home); Toast(msg, Retry(t, state)); }
         }
-        else { Toast(msg); RenderDock(); }
+        else { Toast(msg, Retry(t, state)); RenderDock(); }
     }
 
     // =========================================================================== routes
@@ -451,6 +454,7 @@ public sealed partial class MainWindow : Window
                     : $"Send {(_sendPaths.Count == 1 ? System.IO.Path.GetFileName(_sendPaths[0]) : $"{_sendPaths.Count} files")}";
                 p = _m.Nodes.Count > 0 ? "Choose a device" : "Looking for nearby devices…";
                 acts.Add(Pill("Cancel", false, () => { _core.Scan(false); Go(Route.Home); }));
+                if (_sendText == null) acts.Add(Pill("Add files", false, () => _ = PickFiles(add: true)));
                 break;
             case Route.Waiting when t != null:
                 h = t.Pin == null ? $"Connecting to {t.Peer}…" : $"Waiting for {t.Peer}";
@@ -486,7 +490,7 @@ public sealed partial class MainWindow : Window
             }
             case Route.Done when t != null:
                 h = t.Incoming ? $"Saved to {System.IO.Path.GetFileName(_s.Folder.TrimEnd('\\'))}" : $"Sent to {t.Peer}";
-                p = t.Title;
+                p = t.Title + (_s.Details && t.StayedOnline is { } stayed ? (stayed ? " · PC stayed online" : " · PC went offline") : "");
                 if (t.Incoming)
                 {
                     var saved = t.SavedPath;
@@ -503,7 +507,8 @@ public sealed partial class MainWindow : Window
             }
             case Route.Settings:
                 if (fresh) _settingsPage = "main";
-                p = "Drift 0.1 · works with Quick Share";
+                p = $"Drift {Shell.Updates.Version ?? "dev"} · works with Quick Share";
+                if (Shell.Updates.Available is { } upd) acts.Add(Pill($"Update to {upd}", true, () => _ = UpdateNow()));
                 break;
         }
         Headline.Text = h;
@@ -529,7 +534,10 @@ public sealed partial class MainWindow : Window
     private string XferLine(Transfer t)
     {
         if (t.State != TState.Xfer) return "Waiting";
-        return $"{Mb(t.Done)} of {Mb(t.Size)} · {Math.Floor(t.P * 100)}%";
+        var line = $"{Mb(t.Done)} of {Mb(t.Size)} · {Math.Floor(t.P * 100)}%";
+        // Link details: whether this PC kept its internet goes here (the title bar has no room)
+        if (_s.Details && t.StayedOnline is { } on) line += on ? " · PC online" : " · PC went offline";
+        return line;
     }
 
     private static string Clock(double s) => $"{(int)s / 60}:{(int)s % 60:00}";
@@ -548,20 +556,27 @@ public sealed partial class MainWindow : Window
     /// stayed online while it ran (the point of a direct link).
     private string LinkDetail(Transfer t, bool live = false)
     {
+        // live, in the title bar beside the rate (~27 mono characters): short names only
+        if (live) return t.Medium switch
+        {
+            "lan" => "Wi-Fi LAN",
+            "direct" or "hotspot" => "Wi-Fi Direct",
+            "phone_hosted" => "Phone Direct",
+            "same_hotspot" => "Phone hotspot",
+            _ => LinkName(t),
+        };
         var name = t.Medium switch
         {
             "bluetooth" => "Bluetooth",
             "lan" => "Wi-Fi LAN",
             "hotspot" => "Hotspot",
             "direct" => "Wi-Fi Direct",
-            "phone_hosted" => "Phone's Wi-Fi Direct",
-            "same_hotspot" => "Phone's hotspot",
+            "phone_hosted" => "Phone Direct",
+            "same_hotspot" => "Phone hotspot",
             _ => t.Medium,
         };
-        // the title bar holds ~27 mono characters while sending: keep the live line short
         var parts = new List<string> { name };
         if (!live && t.SetupMs > 0 && t.Medium != "bluetooth") parts.Add($"set up {t.SetupMs / 1000.0:0.0} s");
-        if (t.StayedOnline is { } on) parts.Add(on ? "online" : "went offline");
         return string.Join(" · ", parts);
     }
 
@@ -862,16 +877,31 @@ public sealed partial class MainWindow : Window
     // =========================================================================== toast
 
     private DispatcherQueueTimer? _toastTimer;
+    /// A send that failed: "Try again" opens the device picker with the same files (or text), so
+    /// nobody has to find them again. The device is picked again too: it may have moved or renamed.
+    private (string, Action)? Retry(Transfer t, TState state)
+    {
+        if (state != TState.Failed || t.Incoming) return null;
+        if (t.SendPaths is { Count: > 0 } paths)
+        {
+            var still = paths.Where(File.Exists).ToList();
+            return still.Count == 0 ? null : ("Try again", () => { HideNotice(); ChooseDevice(still); });
+        }
+        if (t.TextKind is { } k && t.TextBody is { } b) return ("Try again", () => { HideNotice(); ChooseDeviceText(k, b); });
+        return null;
+    }
+
     /// One-off failures use the notice card too, and leave on their own after a few seconds.
     /// "Title. Detail" or "Title: detail" splits into the card's two lines.
-    private void Toast(string? msg)
+    private void Toast(string? msg, (string label, Action run)? action = null)
     {
         if (string.IsNullOrEmpty(msg)) return;
         var cut = msg.IndexOfAny(['.', ':']);
         var (title, detail) = cut > 0 && cut < msg.Length - 1
             ? (msg[..cut].Trim(), msg[(cut + 1)..].Trim().TrimEnd('.') is var d && d.Length > 0 ? char.ToUpper(d[0]) + d[1..] + "." : null)
             : (msg.TrimEnd('.'), null);
-        ShowNotice(title, detail, autoHideMs: 5000);
+        // with Try again it stays until used or dismissed
+        ShowNotice(title, detail, autoHideMs: action == null ? 5000 : 0, action: action);
     }
 
     // =========================================================================== dock
@@ -1329,6 +1359,16 @@ public sealed partial class MainWindow : Window
         SetForegroundWindow(_hwnd);
     }
 
+    private void OfferUpdate(string v) =>
+        ShowNotice($"Drift {v} is available", "Update now, or keep this version for now.", action: ("Update", () => _ = UpdateNow()));
+
+    private async Task UpdateNow()
+    {
+        if (_transfers.Any(t => t.Active)) { ShowNotice("Finish the transfer first", "Then update from Settings.", 5000); return; }
+        ShowNotice("Updating Drift", "Downloading. Drift restarts when it's done.");
+        if (!await Shell.Updates.Install()) ShowNotice("Couldn't update", "Check your connection and try again.", 6000);
+    }
+
     private void Quit()
     {
         _quitting = true;
@@ -1471,13 +1511,14 @@ public sealed partial class MainWindow : Window
 
     // =========================================================================== sending
 
-    private async Task PickFiles()
+    /// add: while choosing a device, the picked files join the ones already chosen.
+    private async Task PickFiles(bool add = false)
     {
         var picker = new Windows.Storage.Pickers.FileOpenPicker();
         picker.FileTypeFilter.Add("*");
         WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
         var files = await picker.PickMultipleFilesAsync();
-        if (files.Count > 0) ChooseDevice(files.Select(f => f.Path).ToList());
+        if (files.Count > 0) ChooseDevice(files.Select(f => f.Path).ToList(), add);
     }
 
     private async Task PickFolder()
@@ -1493,9 +1534,17 @@ public sealed partial class MainWindow : Window
         RenderSheet();
     }
 
-    private void ChooseDevice(List<string> paths)
+    private void ChooseDevice(List<string> paths, bool add = false)
     {
         if (paths.Count == 0) return;
+        // more files while choosing a device: add them (dropped or picked), don't start over
+        if (add && _route == Route.Devices && _sendText == null)
+        {
+            // the devices found so far stay; only the heading changes ("Send 3 files")
+            _sendPaths = _sendPaths.Concat(paths).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            RenderFooter(false);
+            return;
+        }
         _sendPaths = paths;
         _sendText = null;
         StartChoosing();
@@ -1585,7 +1634,7 @@ public sealed partial class MainWindow : Window
     {
         _core.Scan(false);
         var files = _sendPaths.Select(p => new CoreFile(System.IO.Path.GetFileName(p), File.Exists(p) ? new System.IO.FileInfo(p).Length : 0)).ToArray();
-        var t = new Transfer { Incoming = false, Peer = name, Files = files, State = TState.Connecting };
+        var t = new Transfer { Incoming = false, Peer = name, Files = files, State = TState.Connecting, SendPaths = _sendPaths.ToList() };
         if (_sendText is { } st) { t.Texts = 1; t.TextKind = st.kind; t.TextBody = st.body; }
         _transfers.Insert(0, t);
         _core.Send(id, _sendPaths, _sendText is { } s2 ? [s2] : null);
@@ -1614,8 +1663,7 @@ public sealed partial class MainWindow : Window
         }
         var items = await e.DataView.GetStorageItemsAsync();
         var paths = items.OfType<Windows.Storage.StorageFile>().Select(f => f.Path).Where(p => !string.IsNullOrEmpty(p)).ToList();
-        if (_route == Route.Devices) _core.Scan(false);
-        ChooseDevice(paths);
+        ChooseDevice(paths, add: true);
     }
 
     // =========================================================================== frame loop
