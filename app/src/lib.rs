@@ -200,6 +200,7 @@ fn spawn_share<S>(
             stall_timeout: std::time::Duration::from_secs(6),
             cancel: Some(cancel_in),
             hold_after_switch: (bootstrap == Bootstrap::Bluetooth && hold > 0).then(|| std::time::Duration::from_millis(hold)),
+            bootstrap_lan: bootstrap == Bootstrap::Lan,
         };
         let result = async {
             let conn = drift_net::accept(stream, &local).await?;

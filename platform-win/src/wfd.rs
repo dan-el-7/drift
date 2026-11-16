@@ -188,19 +188,35 @@ pub async fn join_group(device_name: &str, pin: &str, timeout: Duration) -> Resu
             Ok(())
         },
     ))?;
-    let started = std::time::Instant::now();
-    let res = custom
-        .PairWithProtectionLevelAndSettingsAsync(kinds, DevicePairingProtectionLevel::Default, &params)?
-        .await?;
-    let status = res.Status()?;
-    tracing::info!("[wfd] pairing result {status:?} after {:?}", started.elapsed());
-    if status != DevicePairingResultStatus::Paired && status != DevicePairingResultStatus::AlreadyPaired {
-        bail!("Wi-Fi Direct pairing failed: {status:?}");
+    for attempt in 0..2 {
+        let started = std::time::Instant::now();
+        let op = custom.PairWithProtectionLevelAndSettingsAsync(kinds, DevicePairingProtectionLevel::Default, &params)?;
+        // If this attempt is dropped (the share moved on) or takes too long, cancel the pairing:
+        // left running, it blocks the next one ("OperationAlreadyInProgress") for up to a minute.
+        let _cancel = CancelOnDrop(op.clone());
+        let res = tokio::time::timeout(Duration::from_secs(25), op)
+            .await
+            .map_err(|_| anyhow::anyhow!("Wi-Fi Direct pairing timed out (not confirmed on the phone?)"))??;
+        let status = res.Status()?;
+        tracing::info!("[wfd] pairing result {status:?} after {:?}", started.elapsed());
+        if status != DevicePairingResultStatus::Paired && status != DevicePairingResultStatus::AlreadyPaired {
+            bail!("Wi-Fi Direct pairing failed: {status:?}");
+        }
+        match open_device(&id).await {
+            Ok(link) => {
+                remember_id(&info.Name()?.to_string(), &id);
+                return Ok(link);
+            }
+            // Windows says "already paired" for a pairing it can't open: drop it and pair once more
+            Err(e) if status == DevicePairingResultStatus::AlreadyPaired && attempt == 0 => {
+                tracing::info!("[wfd] already paired but can't open it ({e:#}); unpairing and pairing again");
+                let _ = info.Pairing()?.UnpairAsync()?.await;
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            }
+            Err(e) => return Err(e),
+        }
     }
-
-    let link = open_device(&id).await?;
-    remember_id(&info.Name()?.to_string(), &id);
-    Ok(link)
+    bail!("Wi-Fi Direct pairing failed")
 }
 
 /// Open a known device, racing a fresh open against Windows' scan: a watcher on that endpoint
@@ -344,6 +360,45 @@ fn scopeguard_stop(w: windows::Devices::Enumeration::DeviceWatcher) -> WatcherSt
 /// Phone P2P device ids we've joined before, by name (%APPDATA%\Drift\p2p-devices.txt, "name\tid").
 fn ids_file() -> Option<std::path::PathBuf> {
     Some(std::path::PathBuf::from(std::env::var_os("APPDATA")?).join("Drift").join("p2p-devices.txt"))
+}
+
+/// Cancels a WinRT operation when dropped (a no-op once it has finished).
+struct CancelOnDrop(windows_future::IAsyncOperation<windows::Devices::Enumeration::DevicePairingResult>);
+
+impl Drop for CancelOnDrop {
+    fn drop(&mut self) {
+        if self.0.Status().is_ok_and(|s| s == windows_future::AsyncStatus::Started) {
+            let _ = self.0.Cancel();
+        }
+    }
+}
+
+fn peers_file() -> Option<std::path::PathBuf> {
+    Some(std::path::PathBuf::from(std::env::var_os("APPDATA")?).join("Drift").join("direct-peers.txt"))
+}
+
+/// A Wi-Fi Direct link with this device has worked before: by its Drift name, or (devices whose
+/// Wi-Fi Direct name is their Drift name) a remembered P2P id.
+pub fn direct_known(name: &str) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+    let listed = peers_file()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .is_some_and(|t| t.lines().any(|l| l.trim().eq_ignore_ascii_case(name)));
+    listed || known_id(name).is_some()
+}
+
+pub fn remember_direct_peer(name: &str) {
+    if name.is_empty() || direct_known(name) {
+        return;
+    }
+    let Some(path) = peers_file() else { return };
+    let mut text = std::fs::read_to_string(&path).unwrap_or_default();
+    text.push_str(name);
+    text.push('\n');
+    let _ = std::fs::create_dir_all(path.parent().unwrap());
+    let _ = std::fs::write(&path, text);
 }
 
 fn known_id(name: &str) -> Option<HSTRING> {

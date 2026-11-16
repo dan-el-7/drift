@@ -10,4 +10,5 @@ rand = "0.8"
 tokio = { version = "1.54.1", features = ["rt", "sync", "time", "io-util"] }
 tracing = "0.1.44"
 windows-collections = "0.3"
+windows-future = "0.3"
 windows = { version = "0.62", features = ["Foundation", "Foundation_Collections", "Devices_Bluetooth", "Devices_Bluetooth_Rfcomm", "Devices_Bluetooth_Advertisement", "Networking_Sockets", "Networking_Connectivity", "Storage_Streams", "Devices_WiFiDirect", "Devices_Enumeration", "Devices_Radios", "Security_Credentials", "Win32_Foundation", "Win32_Security_Cryptography", "Win32_NetworkManagement_IpHelper", "Win32_NetworkManagement_Ndis", "Win32_Networking_WinSock"] }

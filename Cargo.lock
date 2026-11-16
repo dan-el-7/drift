@@ -283,6 +283,7 @@ dependencies = [
  "tracing",
  "windows",
  "windows-collections",
+ "windows-future",
 ]
 
 [[package]]

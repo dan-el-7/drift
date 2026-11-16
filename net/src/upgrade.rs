@@ -129,6 +129,15 @@ pub trait Platform: Send + Sync + 'static {
         Box::pin(async { bail!("joining a Wi-Fi network is not supported on this platform") })
     }
     /// The next hop our internet traffic takes (to tell "we're on that phone's hotspot"), if known.
+    /// Has a Wi-Fi Direct link with this device (its Drift name) worked before? A first one needs a
+    /// confirmation on both devices, so a share that's already on the local network skips it.
+    fn direct_known(&self, _peer_name: &str) -> bool {
+        true
+    }
+
+    /// A Wi-Fi Direct link with this device (its Drift name) just worked: remember it.
+    fn direct_worked(&self, _peer_name: &str) {}
+
     fn internet_gateway(&self) -> Option<Ipv4Addr> {
         None
     }
@@ -282,8 +291,12 @@ impl Upgrader {
     pub fn take_request(&mut self, rungs: Vec<Rung>) -> bool {
         let on_lan = matches!(self.active, Some(Rung::Lan)) || self.current.as_ref().is_some_and(|a| a.rung == Rung::Lan);
         let better = rungs.iter().any(|r| *r != Rung::Lan);
+        // A Drift receiver asking for something else while our attempt is still being set up has
+        // given up on it (its join failed): drop ours and follow the new request. Ignoring it left
+        // our group waiting for a joiner that never came, and the fallback never started.
+        let replaces = self.peer_drift && self.active.is_none() && self.current.as_ref().is_some_and(|a| !rungs.contains(&a.rung));
         if self.busy() || self.active.is_some() {
-            if !(self.peer_drift && on_lan && better) {
+            if !(self.peer_drift && on_lan && better) && !replaces {
                 return false;
             }
             if let Some(a) = self.current.take() {
@@ -416,7 +429,17 @@ impl Upgrader {
                         let _ = tx.send(UpgradeEvent::PeerWaitExpired { rung });
                     });
                 } else {
-                    tracing::warn!(rung = ?rung, %reason, "attempt failed before the phone was involved; trying next");
+                    if self.peer_drift && matches!(rung, Rung::PhoneHosted | Rung::PeerHostedHotspot | Rung::PeerHostedLan) {
+                        // the phone may be hosting for us right now: tell it we gave up, so it stops
+                        // waiting and takes the next request
+                        tracing::warn!(rung = ?rung, %reason, "couldn't join the phone's path; telling it, trying next");
+                        self.writer.send(payload::bwu(nc::BandwidthUpgradeNegotiationFrame {
+                            event_type: Some(BwuEvent::UpgradeFailure as i32),
+                            ..Default::default()
+                        }));
+                    } else {
+                        tracing::warn!(rung = ?rung, %reason, "attempt failed before the phone was involved; trying next");
+                    }
                     self.advance();
                 }
                 None
@@ -977,6 +1000,20 @@ mod tests {
         let failure = nc::BandwidthUpgradeNegotiationFrame { event_type: Some(BwuEvent::UpgradeFailure as i32), ..Default::default() };
         r.up.on_peer_frame(&failure);
         assert_eq!(next_path(&mut r, Duration::from_secs(2)).await, Some(UpiMedium::WifiLan as i32));
+    }
+
+    #[tokio::test]
+    async fn a_different_request_replaces_the_attempt_in_progress() {
+        // The phone hosts for a Drift receiver; the receiver's join fails and it asks for LAN
+        // instead. The phone must follow (it used to ignore it and wait for a joiner forever).
+        let mut r = rig(vec![], Arc::new(Health::default()));
+        r.up.set_peer_drift(true);
+        assert!(r.up.take_request(vec![Rung::PcHostedDirect]));
+        assert_eq!(r.up.current.as_ref().map(|a| a.rung), Some(Rung::PcHostedDirect));
+        assert!(r.up.take_request(vec![Rung::Lan]), "a different request was ignored");
+        assert_eq!(r.up.current.as_ref().map(|a| a.rung), Some(Rung::Lan));
+        // the same request again is a repeat: ignored
+        assert!(!r.up.take_request(vec![Rung::Lan]));
     }
 
     #[tokio::test]

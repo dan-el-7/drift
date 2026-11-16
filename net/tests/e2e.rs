@@ -32,6 +32,7 @@ fn recv_cfg(dir: PathBuf) -> ReceiveConfig {
         timeouts: Timeouts::default(),
         stall_timeout: Duration::from_secs(6),
         cancel: None,
+        bootstrap_lan: false,
     }
 }
 
