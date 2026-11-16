@@ -513,6 +513,8 @@ public sealed partial class MainWindow : Window
                 if (fresh) _settingsPage = "main";
                 p = $"Drift {Shell.Updates.Version ?? "dev"} · works with Quick Share";
                 if (Shell.Updates.Available is { } upd) acts.Add(Pill($"Update to {upd}", true, () => _ = UpdateNow()));
+                // the core's log, for a problem report (it restarts with Drift: this session only)
+                acts.Add(Pill("Show log", false, () => Launch("explorer.exe", $"/select,\"{System.IO.Path.Combine(Shell.DataDir.Path, "core.log")}\"")));
                 break;
         }
         Headline.Text = h;

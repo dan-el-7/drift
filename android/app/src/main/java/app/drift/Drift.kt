@@ -335,6 +335,27 @@ object Drift {
         }
     }.getOrDefault(false)
 
+    /**
+     * Settings > Log: hand the core's log to the share sheet (email, chat, Drive...), so people can
+     * report a problem without adb. It's a copy: the core keeps writing its own. The log restarts
+     * when Drift does, so this is the session that just happened.
+     */
+    fun shareLog(ctx: Context) {
+        runCatching {
+            val src = File(app.filesDir, "core.log")
+            val dir = File(app.cacheDir, "logs").apply { mkdirs() }
+            val out = File(dir, "drift-phone.log")
+            src.copyTo(out, overwrite = true)
+            val uri = androidx.core.content.FileProvider.getUriForFile(ctx, "app.drift.logs", out)
+            val send = Intent(Intent.ACTION_SEND)
+                .setType("text/plain")
+                .putExtra(Intent.EXTRA_STREAM, uri)
+                .putExtra(Intent.EXTRA_SUBJECT, "Drift log")
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            ctx.startActivity(Intent.createChooser(send, "Share Drift log").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }.onFailure { notice = Notice("Couldn't share the log", it.message) }
+    }
+
     /** "0.2.10" > "0.2.9": compared number by number. */
     private fun newer(a: String, b: String): Boolean {
         val x = a.split('.').map { it.toIntOrNull() ?: 0 }

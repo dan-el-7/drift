@@ -32,6 +32,7 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -570,7 +571,8 @@ private fun SettingsSheet(close: () -> Unit, onPage: (Boolean) -> Unit) {
     LaunchedEffect(page) { onPage(page != "main") }
     val pagePeek = rememberBackPeek(page != "main") { page = "main" }
     Column(
-        Modifier.fillMaxSize().background(p.bg).backPeek(pagePeek).systemBarsPadding().padding(start = 20.dp, end = 20.dp),
+        Modifier.fillMaxSize().background(p.bg).backPeek(pagePeek).systemBarsPadding()
+            .verticalScroll(androidx.compose.foundation.rememberScrollState()).padding(start = 20.dp, end = 20.dp),
         verticalArrangement = Arrangement.spacedBy(22.dp),
     ) {
         // its own bar, matching the main one, so Close stays where Settings was
@@ -616,6 +618,12 @@ private fun SettingsSheet(close: () -> Unit, onPage: (Boolean) -> Unit) {
                 Drift.notice = Notice("Wi-Fi Direct reset", "The next PC that connects asks you once.")
             }
             Setting("Trusted devices", if (Drift.trusted.isEmpty()) "None yet" else Drift.trusted.joinToString(", ") { it.name }, null, chevron = true) { page = "trusted" }
+            val version = remember { runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName }.getOrNull() ?: "" }
+            Row(Modifier.padding(top = 6.dp, bottom = 24.dp), verticalAlignment = Alignment.CenterVertically) {
+                T("Drift $version", 12.sp, p.g1, mono = true, tracking = 0.04.em)
+                T("  ·  ", 12.sp, p.g2)
+                T("Share log", 12.sp, p.g1, modifier = Modifier.clip(RoundedCornerShape(50)).clickable { Drift.shareLog(ctx) }.padding(vertical = 6.dp))
+            }
         } else {
             if (Drift.trusted.isEmpty()) T("None yet", 17.sp, weight = 500)
             for (d in Drift.trusted) key(d.id) {

@@ -301,6 +301,7 @@ pub async fn send_items(
         match conn {
             Ok(mut c) => {
                 c.peer_drift = device.drift;
+                c.bootstrap_lan = matches!(route, Route::Lan { .. });
                 let _ = pin_tx.send((c.pin(), route.clone()));
                 return drift_net::send::run_with(c, &local, paths, texts, platform, health, allowed, events, cancel).await;
             }

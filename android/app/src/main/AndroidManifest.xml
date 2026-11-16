@@ -75,5 +75,15 @@
             android:name=".VisibleService"
             android:exported="false"
             android:foregroundServiceType="connectedDevice" />
+        <!-- Settings > Log > Share log -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="app.drift.logs"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/log_paths" />
+        </provider>
     </application>
 </manifest>

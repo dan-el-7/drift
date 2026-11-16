@@ -36,6 +36,9 @@ pub struct ConnectedOut {
     pub handshake: HandshakeResult,
     /// The receiver is Drift (from its advertisement); set by the caller, used for trust.
     pub peer_drift: bool,
+    /// We reached the receiver over the local network, not Bluetooth (set by the caller). That link
+    /// is already fast: file data goes at once (no F16 hold) and an upgrade, if any, happens mid-way.
+    pub bootstrap_lan: bool,
     pub rd: BoxRead,
     pub wr: BoxWrite,
 }
@@ -97,7 +100,7 @@ where
     if !accepted {
         bail!("phone rejected the connection");
     }
-    Ok(ConnectedOut { handshake, peer_drift: false, rd, wr })
+    Ok(ConnectedOut { handshake, peer_drift: false, bootstrap_lan: false, rd, wr })
 }
 
 #[derive(Debug)]
@@ -397,7 +400,10 @@ pub async fn run_with(
     let mut tick = tokio::time::interval(Duration::from_millis(250));
     let mut window = (Instant::now(), 0u64);
     let mut rate = 0.0f64; // smoothed; chunk-sized steps make the raw rate jumpy
-    let fast = Arc::new(AtomicBool::new(false));
+    // On a LAN bootstrap the link is fast from the start: no hold, full-size chunks. (Holding there
+    // stalled real shares: a Wi-Fi Direct pairing that never completed kept the data back until the
+    // phone gave up.)
+    let fast = Arc::new(AtomicBool::new(conn.bootstrap_lan));
     let hold = Arc::new(AtomicBool::new(false));
     let mut gate = HoldGate::new(total);
     // (payload id, size) in send order: what to cancel, and where, if the user cancels.
