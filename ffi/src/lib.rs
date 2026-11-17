@@ -365,7 +365,7 @@ async fn run(mut cfg: drift_app::Config, mut cmds: mpsc::UnboundedReceiver<Cmd>,
                     }
                     Err(e) => {
                         tracing::error!("discovery failed: {e:#}");
-                        sh.emit.send(json!({ "t": "warning", "text": "Can't look for devices", "detail": "Check that Bluetooth is on." }));
+                        sh.emit.send(json!({ "t": "warning", "text": "Can't look for devices", "detail": "Check your network connection." }));
                     }
                 }
             }

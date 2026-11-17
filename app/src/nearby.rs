@@ -122,7 +122,7 @@ pub struct Discovery {
     _task: tokio::task::JoinHandle<()>,
     _mdns: mdns_sd::ServiceDaemon,
     #[cfg(windows)]
-    _win: (drift_platform_win::bt::BlePublisher, drift_platform_win::scan::BleScanner),
+    _win: (Option<drift_platform_win::bt::BlePublisher>, Option<drift_platform_win::scan::BleScanner>),
 }
 
 impl Drop for Discovery {
@@ -145,6 +145,13 @@ pub fn discover() -> Result<(Discovery, mpsc::UnboundedReceiver<NearbyEvent>)> {
     discover_with(None)
 }
 
+#[cfg(windows)]
+fn start_bluetooth<S, B>(scanner: impl FnOnce() -> Result<S>, beacon: impl FnOnce() -> Result<B>) -> (Option<B>, Option<S>) {
+    let scanner = scanner().inspect_err(|e| tracing::warn!("BLE scanning unavailable; mDNS discovery continues: {e:#}")).ok();
+    let beacon = beacon().inspect_err(|e| tracing::warn!("BLE wake beacon unavailable; discovery continues: {e:#}")).ok();
+    (beacon, scanner)
+}
+
 /// `discover`, also finding trusted Drift phones (no address in their advert) via `resolver`.
 pub fn discover_with(resolver: Option<Resolver>) -> Result<(Discovery, mpsc::UnboundedReceiver<NearbyEvent>)> {
     let (out_tx, out_rx) = mpsc::unbounded_channel();
@@ -156,9 +163,11 @@ pub fn discover_with(resolver: Option<Resolver>) -> Result<(Discovery, mpsc::Unb
         use drift_platform_win::{bt, scan};
         let (tx, rx) = mpsc::unbounded_channel();
         static UUIDS: [u16; 1] = [ble::COPRESENCE_UUID16];
-        let scanner = scan::scan_ble(&UUIDS, tx)?;
-        let beacon = bt::start_ble(ble::FAST_INIT_UUID16, &ble::fast_init_beacon(ble::FastInitType::Notify, true), false)?;
-        ((beacon, scanner), rx)
+        let win = start_bluetooth(
+            || scan::scan_ble(&UUIDS, tx),
+            || bt::start_ble(ble::FAST_INIT_UUID16, &ble::fast_init_beacon(ble::FastInitType::Notify, true), false),
+        );
+        (win, rx)
     };
     #[cfg(not(windows))]
     let mut ble_rx = {
@@ -320,6 +329,16 @@ pub async fn send_items(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn bluetooth_startup_failures_are_optional() {
+        let unavailable = || Err::<u8, _>(anyhow::anyhow!("Bluetooth unavailable"));
+        assert_eq!(start_bluetooth(unavailable, || Ok(2)), (Some(2), None));
+        assert_eq!(start_bluetooth(|| Ok(1), unavailable), (None, Some(1)));
+        assert_eq!(start_bluetooth(unavailable, unavailable), (None, None));
+        assert_eq!(start_bluetooth(|| Ok(1), || Ok(2)), (Some(2), Some(1)));
+    }
 
     fn info(name: Option<&str>) -> EndpointInfo {
         let mut i = EndpointInfo::new_visible(name.unwrap_or("x"), DeviceType::Phone);
