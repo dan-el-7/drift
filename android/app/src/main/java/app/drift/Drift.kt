@@ -229,6 +229,7 @@ object Drift {
             main.postDelayed(hide, 10 * 60_000)
         } else visibleUntil = 0
         cmd("visibility", "everyone" to (v != Visibility.Hidden))
+        VisibleService.visibilityChanged()
     }
 
     fun scan(on: Boolean) {
@@ -243,10 +244,16 @@ object Drift {
 
     // ---------------------------------------------------------------- shares
 
-    fun respond(t: Transfer, accept: Boolean, always: Boolean = false) {
+    fun respond(t: Transfer, accept: Boolean, always: Boolean = false, automatic: Boolean = false) {
+        if (accept && !VisibleService.ensure(app)) {
+            if (!automatic) notice = Notice("Open Drift to accept", "Android couldn't start background sharing.")
+            return
+        }
         cmd("respond", "share" to t.share, "accept" to accept)
         if (accept && always) { cmd("trust", "share" to t.share); t.trusted = true }
         t.state = if (accept) TState.Xfer else TState.Declined
+        Notices.remove(app, t.share)
+        VisibleService.transferChanged()
     }
 
     /**
@@ -374,8 +381,13 @@ object Drift {
      *  a symlink named like the file, pointing at our open descriptor. */
     fun send(device: Device) {
         val box = outbox ?: return
+        if (!VisibleService.ensure(app)) {
+            notice = Notice("Couldn't start sharing", "Keep Drift open and try again.")
+            return
+        }
         outbox = null
         pendingBox = box
+        VisibleService.transferChanged()
         val dir = File(app.cacheDir, "send/${System.nanoTime()}").apply { mkdirs() }
         val paths = JSONArray()
         for (uri in box.uris) {
@@ -398,6 +410,9 @@ object Drift {
     private var pendingTexts = 0
     private var pendingKind: String? = null
     private var pendingBox: Outbox? = null
+    val preparingSend get() = pendingBox != null
+    var savingFiles = 0
+        private set
 
     /** "Send <this>": the file's name, "3 files", "a link" or "some text" (as the desktop's heading). */
     fun outboxTitle(): String {
@@ -463,25 +478,29 @@ object Drift {
                     drift = e.optBoolean("drift"), trusted = e.optBoolean("trusted"),
                     texts = e.optInt("texts"), textKind = e.optString("text_kind").ifEmpty { null },
                 )
-                if (e.optBoolean("auto")) t.state = TState.Xfer
                 transfers.add(0, t)
+                // Android only lets us start a foreground service from visible UI or a user action.
+                if (e.optBoolean("auto") && (DriftApp.inFront || VisibleService.running)) respond(t, true, automatic = true)
                 if (t.state == TState.Request) Notices.incoming(app, t)
             }
             "waiting" -> {
                 val t = find(share) ?: Transfer(share, false, e.optString("name"), e.optJSONArray("files").items { FileItem(it.optString("name"), it.optLong("size")) }, null, texts = pendingTexts, textKind = pendingKind).also {
                     it.state = TState.Waiting
                     it.sent = pendingBox
+                    pendingBox = null
                     transfers.add(0, it)
                 }
                 e.optString("pin").ifEmpty { null }?.let { t.pin = it }
+                VisibleService.transferChanged()
             }
-            "accepted" -> find(share)?.state = TState.Xfer
+            "accepted" -> find(share)?.let { it.state = TState.Xfer; VisibleService.transferChanged() }
             "medium" -> find(share)?.medium = e.optString("medium")
             "progress" -> find(share)?.let {
                 it.done = e.optLong("done"); it.total = maxOf(it.total, e.optLong("total")); it.bps = e.optDouble("bps", 0.0).toFloat()
                 if (it.state == TState.Waiting || it.state == TState.Request) it.state = TState.Xfer
                 checkStuckOnBluetooth(it)
                 checkSlowLink(it)
+                VisibleService.transferChanged(progressOnly = true)
             }
             "text" -> find(share)?.text = e.optString("text")
             "saved" -> {
@@ -490,9 +509,15 @@ object Drift {
                 t?.saved?.add(path)
                 // show it in Files / Downloads, and get a content URI to open it with
                 val tree = saveTree
-                if (tree != null) moveToTree(tree, path) { doc ->
-                    if (doc != null) t?.savedUris?.add(doc)
-                    else MediaScannerConnection.scanFile(app, arrayOf(path), null) { _, uri -> if (uri != null && t != null) main.post { t.savedUris += uri } }
+                if (tree != null) {
+                    savingFiles++
+                    VisibleService.transferChanged()
+                    moveToTree(tree, path) { doc ->
+                        if (doc != null) t?.savedUris?.add(doc)
+                        else MediaScannerConnection.scanFile(app, arrayOf(path), null) { _, uri -> if (uri != null && t != null) main.post { t.savedUris += uri } }
+                        savingFiles--
+                        VisibleService.transferChanged()
+                    }
                 }
                 // show it in Files / Downloads, and get a content URI to open it with
                 else MediaScannerConnection.scanFile(app, arrayOf(path), null) { _, uri -> if (uri != null && t != null) main.post { t.savedUris += uri } }
@@ -511,6 +536,7 @@ object Drift {
                     openFds.forEach { runCatching { it.close() } }
                     openFds.clear()
                 }
+                VisibleService.transferChanged()
             }
             "trusted" -> trusted = e.optJSONArray("devices").items { TrustedDevice(it.optString("id"), it.optString("name"), it.optBoolean("auto")) }
         }

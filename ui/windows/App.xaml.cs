@@ -51,11 +51,11 @@ public partial class App : Application
         var argv = Environment.GetCommandLineArgs();
         ICore core = argv.Contains("--mock") ? new MockCore() : NativeCore.TryCreate() ?? (ICore)new MockCore();
         _window = new MainWindow(core);
-        // `--tray` or the package's startup task (open at sign-in): start in the tray, window hidden
+        // At sign-in, start quietly only when the tray is enabled.
         var atSignIn = argv.Contains("--tray");
         try { atSignIn |= Microsoft.Windows.AppLifecycle.AppInstance.GetCurrent().GetActivatedEventArgs().Kind == Microsoft.Windows.AppLifecycle.ExtendedActivationKind.StartupTask; }
         catch { }
-        if (!atSignIn) _window.Activate();
+        if (!atSignIn || !_window.KeepInTray) _window.Activate();
     }
 
     private void ApplyTokens()

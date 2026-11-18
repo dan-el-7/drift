@@ -57,6 +57,7 @@ public sealed class Tray : IDisposable
     private readonly Action _open, _quit;
     private nint _icon;
     private bool _added;
+    public bool IsAdded => _added;
 
     public Tray(nint hwnd, string iconPath, Action open, Action quit)
     {

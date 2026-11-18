@@ -584,6 +584,13 @@ async fn forward_service(mut rx: mpsc::UnboundedReceiver<ServiceEvent>, sh: Shar
                     }
                     if let Some(k) = peer_key { sh.peer_keys.lock().unwrap().insert(id, (peer.clone(), k, bt_addrs.get(&id).copied().flatten())); }
                     let files: Vec<Value> = files.iter().map(|f| json!({ "name": f.name, "size": f.size.max(0) })).collect();
+                    // Android starts its foreground service before taking a trusted share.
+                    let auto_decision = if auto && !cfg!(target_os = "android") {
+                        Some(decision)
+                    } else {
+                        sh.decisions.lock().unwrap().insert(id, decision);
+                        None
+                    };
                     sh.emit.send(json!({
                         "t": "incoming", "share": id, "from": peer, "kind": "phone", "pin": pin,
                         "files": files, "texts": texts.len(), "text_kind": texts.first().map(|t| text_kind(t.kind.clone())),
@@ -592,11 +599,9 @@ async fn forward_service(mut rx: mpsc::UnboundedReceiver<ServiceEvent>, sh: Shar
                     if let Some((name, ms)) = links.get(&id) {
                         sh.emit.send(json!({ "t": "medium", "share": id, "medium": name, "setup_ms": ms }));
                     }
-                    if auto {
+                    if let Some(decision) = auto_decision {
                         let _ = decision.send(true);
                         sh.emit.send(json!({ "t": "accepted", "share": id, "direction": "incoming" }));
-                    } else {
-                        sh.decisions.lock().unwrap().insert(id, decision);
                     }
                 }
                 ReceiveEvent::MediumChanged { medium, setup } => {

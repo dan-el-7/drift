@@ -71,8 +71,9 @@ public sealed partial class MainWindow : Window
         public bool Details { get; set; }
         /// Visible to everyone nearby all the time (a tray app that can always receive).
         public bool AlwaysVisible { get; set; }
-        /// Start Drift (in the tray) when you sign in to Windows.
+        /// Start Drift when you sign in to Windows.
         public bool OpenAtSignIn { get; set; }
+        public bool KeepInTray { get; set; } = true;
         public string Folder { get; set; } = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
     }
 
@@ -1162,7 +1163,7 @@ public sealed partial class MainWindow : Window
             var folder = Pill("Change…", false, () => _ = PickFolder());
             SheetBody.Children.Add(Setting("Save to", folder, _s.Folder));
             SheetBody.Children.Add(Setting("Look", Seg([("Ink", _s.Look == "ink"), ("Monolith", _s.Look == "mono"), ("Field", _s.Look == "field")], i => { SetLook(i switch { 1 => "mono", 2 => "field", _ => "ink" }); SaveSettings(); RenderSheet(); }), null));
-            SheetBody.Children.Add(Setting("Link details", Toggle(_s.Details, v => { _s.Details = v; SaveSettings(); }), "Adds the link type and whether your Wi-Fi stayed on."));
+            SheetBody.Children.Add(Setting("Link details", Toggle("Link details", _s.Details, v => { _s.Details = v; SaveSettings(); }), "Adds the link type and whether your Wi-Fi stayed on."));
             var trusted = new Button
             {
                 Style = Bare, FontSize = 13, Padding = new Thickness(10, 4, 8, 5), CornerRadius = new CornerRadius(12),
@@ -1172,7 +1173,7 @@ public sealed partial class MainWindow : Window
             Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(trusted, "Trusted devices");
             trusted.Click += (_, _) => { _settingsPage = "trusted"; RenderSheet(); };
             SheetBody.Children.Add(Setting("Trusted devices", trusted, null));
-            SheetBody.Children.Add(Setting("Open at sign-in", Toggle(_s.OpenAtSignIn, v => { _s.OpenAtSignIn = v; SaveSettings(); SetOpenAtSignIn(v); }), "Starts quietly in the tray, ready to receive."));
+            SheetBody.Children.Add(Setting("Open at sign-in", Toggle("Open at sign-in", _s.OpenAtSignIn, v => { _s.OpenAtSignIn = v; SaveSettings(); SetOpenAtSignIn(v); }), "Starts Drift when you sign in to Windows."));
             Button? reset = null;
             reset = Pill(_btResetting ? "Restarting…" : "Restart Bluetooth", false, () => _ = ResetBluetooth(reset!));
             reset.IsEnabled = !_btResetting;
@@ -1181,6 +1182,12 @@ public sealed partial class MainWindow : Window
             wfd = Pill(_wfdResetting ? "Resetting…" : "Reset pairing", false, () => _ = ResetWifiDirect(wfd!));
             wfd.IsEnabled = !_wfdResetting;
             SheetBody.Children.Add(Setting("Wi-Fi Direct", wfd, "If a phone's direct link stops connecting. The phone asks once more next time."));
+            SheetBody.Children.Add(Setting("Keep in tray when closed", Toggle("Keep in tray when closed", _s.KeepInTray, v =>
+            {
+                _s.KeepInTray = v;
+                SaveSettings();
+                UpdateTray();
+            }), "Keeps Drift running and ready to receive after you close the window."));
         }
     }
 
@@ -1312,7 +1319,7 @@ public sealed partial class MainWindow : Window
         return new Border { Child = row, BorderThickness = new Thickness(1), BorderBrush = Brush(D.Grey2), CornerRadius = new CornerRadius(16), Padding = new Thickness(2), HorizontalAlignment = HorizontalAlignment.Left };
     }
 
-    private FrameworkElement Toggle(bool on, Action<bool> set)
+    private FrameworkElement Toggle(string name, bool on, Action<bool> set)
     {
         var thumb = new Border { Width = 14, Height = 14, CornerRadius = new CornerRadius(7), HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(3, 0, 0, 0) };
         var track = new Border { Width = 34, Height = 20, CornerRadius = new CornerRadius(10), Child = thumb };
@@ -1334,8 +1341,10 @@ public sealed partial class MainWindow : Window
         }
         Paint();
         var b = new Button { Style = Bare, Content = track, CornerRadius = new CornerRadius(10), HorizontalAlignment = HorizontalAlignment.Left };
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(b, "Link details");
-        b.Click += (_, _) => { on = !on; Paint(); set(on); };
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(b, name);
+        void DescribeState() => Microsoft.UI.Xaml.Automation.AutomationProperties.SetItemStatus(b, on ? "On" : "Off");
+        DescribeState();
+        b.Click += (_, _) => { on = !on; Paint(); DescribeState(); set(on); };
         return b;
     }
 
@@ -1354,6 +1363,7 @@ public sealed partial class MainWindow : Window
     private DispatcherQueueTimer? _visTimer;
     private bool _quitting;
     private nint _hwnd;
+    internal bool KeepInTray => _s.KeepInTray && _tray?.IsAdded == true;
 
     [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern nint GetForegroundWindow();
     [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern bool SetForegroundWindow(nint hWnd);
@@ -1362,15 +1372,11 @@ public sealed partial class MainWindow : Window
     {
         _hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
         var icon = System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "Drift.ico");
-        if (File.Exists(icon))
-        {
-            AppWindow.SetIcon(icon);
-            _tray = new Shell.Tray(_hwnd, icon, ShowFromTray, Quit);
-        }
+        if (File.Exists(icon)) AppWindow.SetIcon(icon);
+        UpdateTray();
         _notices = new Shell.Notices();
         _notices.Invoked += a => _dq.TryEnqueue(() => OnNotice(a));
-        // × and Alt+F4 tuck Drift into the tray (it keeps receiving); Quit is in the tray menu.
-        AppWindow.Closing += (_, e) => { if (!_quitting) { e.Cancel = true; AppWindow.Hide(); } };
+        AppWindow.Closing += (_, e) => { if (!_quitting && KeepInTray) { e.Cancel = true; AppWindow.Hide(); } };
         if (_s.AlwaysVisible) _everyone = true;
         _visTimer = _dq.CreateTimer();
         _visTimer.Interval = TimeSpan.FromSeconds(1);
@@ -1381,6 +1387,19 @@ public sealed partial class MainWindow : Window
             SampleOnline();
         };
         _visTimer.Start();
+    }
+
+    private void UpdateTray()
+    {
+        if (!_s.KeepInTray)
+        {
+            _tray?.Dispose();
+            _tray = null;
+            return;
+        }
+
+        var icon = System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "Drift.ico");
+        if (File.Exists(icon)) _tray ??= new Shell.Tray(_hwnd, icon, ShowFromTray, Quit);
     }
 
     /// In front and visible: no need for a Windows notification.
@@ -1451,7 +1470,7 @@ public sealed partial class MainWindow : Window
     }
 
     /// Open at sign-in. Packaged: the manifest's startup task (Task Manager > Startup apps lists it).
-    /// Dev builds: an HKCU Run entry (this user only, no admin). Either way Drift starts in the tray.
+    /// Dev builds: an HKCU Run entry (this user only, no admin).
     private async void SetOpenAtSignIn(bool on)
     {
         if (IsPackaged)
@@ -1804,7 +1823,11 @@ public sealed partial class MainWindow : Window
     private void OnActivity(object sender, RoutedEventArgs e) => Go(Route.Activity);
     private void OnSettings(object sender, RoutedEventArgs e) => Go(Route.Settings);
     private void OnMinimize(object sender, RoutedEventArgs e) { if (AppWindow.Presenter is OverlappedPresenter p) p.Minimize(); }
-    private void OnClose(object sender, RoutedEventArgs e) => AppWindow.Hide(); // to the tray; Quit is in its menu
+    private void OnClose(object sender, RoutedEventArgs e)
+    {
+        if (KeepInTray) AppWindow.Hide();
+        else Quit();
+    }
 
     // =========================================================================== demo (--demo): a scripted tour for screenshots
 

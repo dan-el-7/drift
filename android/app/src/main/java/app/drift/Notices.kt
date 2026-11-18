@@ -40,17 +40,16 @@ object Notices {
             .addAction(Notification.Action.Builder(null, "Decline", act(false)).build())
             .addAction(Notification.Action.Builder(null, "Accept", act(true)).build())
             .build()
-        runCatching { nm(ctx).notify(t.share.toInt(), n) } // no permission: the app shows it when opened
+        runCatching { nm(ctx).notify(CHANNEL, t.share.toInt(), n) } // no permission: the app shows it when opened
     }
 
-    fun remove(ctx: Context, share: Long) = runCatching { nm(ctx).cancel(share.toInt()) }
+    fun remove(ctx: Context, share: Long) = runCatching { nm(ctx).cancel(CHANNEL, share.toInt()) }
 
     class Respond : BroadcastReceiver() {
         override fun onReceive(ctx: Context, i: Intent) {
             val share = i.getLongExtra("share", -1)
             val t = Drift.transfers.firstOrNull { it.share == share } ?: return
             if (t.state == TState.Request) Drift.respond(t, i.getBooleanExtra("accept", false))
-            remove(ctx, share)
         }
     }
 }
