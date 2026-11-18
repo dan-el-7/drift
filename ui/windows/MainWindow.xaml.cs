@@ -586,7 +586,7 @@ public sealed partial class MainWindow : Window
 
     private static string Rate(double bps) => bps >= 10e6 ? $"{bps / 1e6:0} MB/s" : $"{bps / 1e6:0.0} MB/s";
 
-    /// A transfer still on Bluetooth 12 s after it started moving (and big enough to matter): say why,
+    /// A transfer still on Bluetooth 35 s after it started moving (and big enough to matter): say why,
     /// once. From here we can't see the phone's Wi-Fi or hotspot, so name both likely causes.
     private void CheckStuckOnBluetooth()
     {
@@ -596,7 +596,7 @@ public sealed partial class MainWindow : Window
             var now = _clock.ElapsedMilliseconds;
             if (t.MovingSinceMs == 0) { t.MovingSinceMs = now; continue; }
             // a first Wi-Fi Direct link waits on a tap on the phone (and Windows' search): give it time
-            if (now - t.MovingSinceMs < 20_000) continue;
+            if (now - t.MovingSinceMs < 35_000) continue;
             t.WarnedSlow = true;
             ShowNotice("Still on Bluetooth",
                 $"If {t.Peer} asks to connect, accept it for a direct link. Otherwise turn Wi-Fi on there (no network needed) and its hotspot off, or connect this PC to that hotspot.", 14000);

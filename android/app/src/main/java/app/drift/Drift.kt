@@ -281,7 +281,7 @@ object Drift {
     }.start()
 
     /**
-     * A transfer still on Bluetooth 12 s after it started moving (and big enough to matter): say why
+     * A transfer still on Bluetooth 35 s after it started moving (and big enough to matter): say why
      * once, with the fix. Usually the phone's Wi-Fi is off (Wi-Fi Direct goes with it) or its hotspot
      * is on (this phone can't run a hotspot and a Wi-Fi Direct group at once).
      */
@@ -290,7 +290,7 @@ object Drift {
         if (t.medium != null && t.medium != "bluetooth") return
         val now = System.currentTimeMillis()
         if (t.movingSince == 0L) { t.movingSince = now; return }
-        if (now - t.movingSince < 20_000) return // a first Wi-Fi Direct link waits on a tap here
+        if (now - t.movingSince < 35_000) return // a first Wi-Fi Direct link waits on a tap here
         t.warnedSlow = true
         val wifi = app.getSystemService(WifiManager::class.java)
         fun open(action: String) = runCatching { app.startActivity(Intent(action).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
