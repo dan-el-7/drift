@@ -104,11 +104,12 @@ fun InkStage(m: StageModel, dark: Boolean, modifier: Modifier = Modifier) {
     }
     val st = remember { InkState() }
     // The approved look: Gaussian sigma 7 px at 125% (CSS blur()/Win2D) = 5.6 dp; the ring's 4 px = 3.2 dp.
-    // The value is passed as the deviation itself: converting it as a Skia "radius" (sigma = 0.57735 r
-    // + 0.5) made every blur ~1.7x too wide on Android 17 (re-measured 2026-11-26 against Windows): the
-    // satellites never broke off the drop and the presence ripples never showed.
+    // Android takes a radius, not a deviation. Matched to Windows by eye and by the threshold maths on a
+    // realme GT 7 Pro (Android 17, 2026-11-26): only the biggest satellite (6.5) may break off, as a tiny
+    // dot, the others stay fused, and the presence ripples thin out as they spread. 1.73x (Skia's
+    // radius-to-sigma formula) kept everything fused with no ripples; 1x let all three fly off.
     remember(density) {
-        fun radius(sigmaDp: Float) = sigmaDp * density
+        fun radius(sigmaDp: Float) = sigmaDp * density * 1.58f
         st.blobs.setRenderEffect(RenderEffect.createBlurEffect(radius(5.6f), radius(5.6f), Shader.TileMode.DECAL))
         st.ring.setRenderEffect(RenderEffect.createBlurEffect(radius(3.2f), radius(3.2f), Shader.TileMode.DECAL))
         // the two layers add up before the threshold, as Win2D's CanvasComposite.Add
