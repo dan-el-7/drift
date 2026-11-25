@@ -12,8 +12,8 @@ android {
         applicationId = "app.drift"
         minSdk = 31 // RenderEffect (Ink's blur + threshold)
         targetSdk = 37
-        versionCode = 8
-        versionName = "0.2.7"
+        versionCode = 9
+        versionName = "0.2.8"
         ndk { abiFilters += "arm64-v8a" }
     }
     buildTypes {
