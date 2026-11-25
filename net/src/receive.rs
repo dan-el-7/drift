@@ -37,6 +37,19 @@ pub struct ReceiveConfig {
     pub cancel: Option<Arc<tokio::sync::Notify>>,
 }
 
+/// Windows: tag a received file as coming from another device (zone 3, "Internet"), like a browser
+/// download, so opening a received program goes through SmartScreen. Best effort; no-op elsewhere.
+async fn mark_of_the_web(path: &std::path::Path) {
+    #[cfg(windows)]
+    {
+        let mut ads = path.as_os_str().to_owned();
+        ads.push(":Zone.Identifier");
+        let _ = tokio::fs::write(std::path::PathBuf::from(ads), b"[ZoneTransfer]\r\nZoneId=3\r\n").await;
+    }
+    #[cfg(not(windows))]
+    let _ = path;
+}
+
 /// What the connection is currently running over.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Medium {
@@ -310,6 +323,7 @@ pub async fn run(
                             crate::stats::report("receive pipeline", of.bytes, of.started.elapsed());
                             drop(of.file);
                             tokio::fs::rename(&of.part, &of.dest).await?;
+                            mark_of_the_web(&of.dest).await;
                             let _ = events.send(ReceiveEvent::FileSaved { path: of.dest, bytes: of.bytes });
                         }
                     }

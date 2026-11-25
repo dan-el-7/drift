@@ -311,8 +311,18 @@ pub struct BytesAssembler {
 impl BytesAssembler {
     /// Feed a chunk; returns the full payload once the last chunk arrives.
     pub fn push(&mut self, id: i64, chunk: &nc::payload_transfer_frame::PayloadChunk) -> Option<Vec<u8>> {
+        // Bytes payloads are sharing frames, links and text: small. A peer can't make us buffer more.
+        const MAX: usize = 16 << 20;
+        const MAX_PENDING: usize = 64;
+        if !self.pending.contains_key(&id) && self.pending.len() >= MAX_PENDING {
+            return None;
+        }
         let buf = self.pending.entry(id).or_default();
         if let Some(body) = &chunk.body {
+            if buf.len() + body.len() > MAX {
+                self.pending.remove(&id);
+                return None;
+            }
             buf.extend_from_slice(body);
         }
         if chunk.flags.unwrap_or(0) & 1 != 0 { self.pending.remove(&id) } else { None }

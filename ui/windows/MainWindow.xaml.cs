@@ -83,7 +83,9 @@ public sealed partial class MainWindow : Window
     private IStageRenderer _renderer = new InkRenderer();
     private Palette _pal;
     private readonly Stopwatch _clock = Stopwatch.StartNew();
-    private double _last, _tick;
+    private double _last, _tick, _lastDraw;
+    private int _cancelledBeforeId;                 // sends cancelled before the core gave them an id
+    private readonly HashSet<ulong> _ignoredShares = new();
     private Settings _s = new();
     private bool _everyone = true;
     private double _visLeft = 600;
@@ -132,9 +134,12 @@ public sealed partial class MainWindow : Window
         }
 
         _core.Event += e => _dq.TryEnqueue(() => OnCore(e));
+        var window = AppWindow;
         Closed += (_, _) =>
         {
-            Microsoft.UI.Xaml.Media.CompositionTarget.Rendering -= OnFrame;
+            window.Changed -= OnAppWindowChanged;
+            Activated -= OnWindowActivated;
+            SetFrameLoop(false);
             _visTimer?.Stop();
             _tray?.Dispose();
             _notices?.Dispose();
@@ -142,8 +147,10 @@ public sealed partial class MainWindow : Window
         };
         _core.Start(_s.Name, _s.Folder); // the name phones show
         _core.SetVisible(_everyone);     // the app opens visible for 10 minutes
-        Microsoft.UI.Xaml.Media.CompositionTarget.Rendering += OnFrame;
         Go(Route.Home);
+        window.Changed += OnAppWindowChanged;
+        Activated += OnWindowActivated;
+        SyncFrameLoop();
         if (Environment.GetCommandLineArgs().Contains("--demo")) _ = Demo();
         // Dev: `--notice` shows the notice card 1 s after start (for frame captures).
         if (Environment.GetCommandLineArgs().Contains("--notice")) Once(1000, () => ShowNotice("Quit Google Quick Share", "Phones may reach it instead of Drift.", action: ("Quit it", QuitGoogleQuickShare)));
@@ -242,6 +249,14 @@ public sealed partial class MainWindow : Window
                 // Our send got through to the phone: it now shows the same code.
                 var t = _transfers.FirstOrDefault(t => !t.Incoming && t.Share == 0 && t.State == TState.Connecting)
                         ?? Find(e.Share);
+                if (t == null && _cancelledBeforeId > 0)
+                {
+                    // the send the user cancelled before it had an id: stop it now, show nothing
+                    _cancelledBeforeId--;
+                    _ignoredShares.Add(e.Share);
+                    _core.Cancel(e.Share);
+                    break;
+                }
                 if (t == null) { t = new Transfer { Incoming = false }; _transfers.Insert(0, t); }
                 t.Share = e.Share; t.Pin = e.Pin; t.State = TState.Waiting;
                 if (e.Name != null) t.Peer = e.Name;
@@ -270,7 +285,18 @@ public sealed partial class MainWindow : Window
             case "saved" when Find(e.Share) is { } t:
                 t.SavedPath = e.Path;
                 break;
-            case "done" when Find(e.Share) is { } t:
+            case "done":
+            {
+                var t = Find(e.Share);
+                if (t == null)
+                {
+                    if (_ignoredShares.Remove(e.Share)) break;
+                    if (_cancelledBeforeId > 0) { _cancelledBeforeId--; break; } // the cancelled one, ended before it got far
+                    // our send that never reached the phone: it waits as "Connecting" with no id
+                    t = _transfers.LastOrDefault(x => !x.Incoming && x.Share == 0 && x.State == TState.Connecting);
+                    if (t == null) break;
+                    t.Share = e.Share;
+                }
                 switch (e.Outcome)
                 {
                     case "completed": Finish(t, TState.Done, null); break;
@@ -280,6 +306,7 @@ public sealed partial class MainWindow : Window
                     default: Finish(t, TState.Failed, e.Error ?? "Something went wrong"); break;
                 }
                 break;
+            }
         }
     }
 
@@ -462,7 +489,12 @@ public sealed partial class MainWindow : Window
                 h = t.Pin == null ? $"Connecting to {t.Peer}…" : $"Waiting for {t.Peer}";
                 p = t.Pin == null ? "Hold on, this takes a moment" : "Check the code matches, then accept on the phone";
                 acts.Add(Pill("Hide", false, Back));
-                acts.Add(Pill("Cancel send", false, () => { if (t.Share != 0) _core.Cancel(t.Share); Finish(t, TState.Cancelled, null); }));
+                acts.Add(Pill("Cancel send", false, () =>
+                {
+                    if (t.Share != 0) _core.Cancel(t.Share);
+                    else _cancelledBeforeId++; // the core hasn't named it yet: cancel it when it does
+                    Finish(t, TState.Cancelled, null);
+                }));
                 break;
             case Route.Request when t != null:
                 h = $"{t.Peer} wants to send";
@@ -1385,6 +1417,7 @@ public sealed partial class MainWindow : Window
             if (_everyone && !_s.AlwaysVisible) { _visLeft -= 1; if (_visLeft <= 0) SetEveryone(false); }
             _tray?.SetTip(_everyone ? (_s.AlwaysVisible ? "Drift · visible" : $"Drift · visible {Clock(_visLeft)}") : "Drift · hidden");
             SampleOnline();
+            CheckStuckOnBluetooth();
         };
         _visTimer.Start();
     }
@@ -1408,6 +1441,8 @@ public sealed partial class MainWindow : Window
     private void ShowFromTray()
     {
         AppWindow.Show();
+        if (AppWindow.Presenter is OverlappedPresenter { State: OverlappedPresenterState.Minimized } presenter)
+            presenter.Restore();
         Activate();
         SetForegroundWindow(_hwnd);
     }
@@ -1710,6 +1745,29 @@ public sealed partial class MainWindow : Window
     private static readonly double PinAt = Environment.GetCommandLineArgs() is var a && Array.IndexOf(a, "--pin-at") is var i && i >= 0 && i + 1 < a.Length && double.TryParse(a[i + 1], System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : -1;
     private bool _reducedCache;
     private double _reducedCheck;
+    private bool _rendering;
+
+    private void OnAppWindowChanged(AppWindow sender, AppWindowChangedEventArgs args) => SyncFrameLoop();
+
+    private void OnWindowActivated(object sender, WindowActivatedEventArgs args) => SyncFrameLoop();
+
+    private void SyncFrameLoop() => SetFrameLoop(
+        AppWindow.IsVisible && AppWindow.Presenter is not OverlappedPresenter { State: OverlappedPresenterState.Minimized });
+
+    private void SetFrameLoop(bool enabled)
+    {
+        if (_rendering == enabled) return;
+        _rendering = enabled;
+        if (enabled)
+        {
+            _last = _clock.Elapsed.TotalSeconds;
+            CompositionTarget.Rendering += OnFrame;
+        }
+        else
+        {
+            CompositionTarget.Rendering -= OnFrame;
+        }
+    }
 
     private void OnFrame(object? sender, object e)
     {
@@ -1783,7 +1841,6 @@ public sealed partial class MainWindow : Window
         {
             _tick = 0;
             if (_route == Route.Transfer && f != null) Subline.Text = XferLine(f);
-            CheckStuckOnBluetooth();
             if (_route == Route.Home) RenderFooter(false);
             if (_route == Route.Activity) { RenderSheet(); RenderFooter(false); }
             RenderDock();
@@ -1792,7 +1849,9 @@ public sealed partial class MainWindow : Window
 
     private void OnDraw(CanvasControl sender, CanvasDrawEventArgs args)
     {
-        var dt = 1 / 60.0; // particles only; springs step in OnFrame
+        var now = _clock.Elapsed.TotalSeconds;
+        var dt = Math.Clamp(now - _lastDraw, 0, 0.05); // particles only; springs step in OnFrame
+        _lastDraw = now;
         _renderer.Draw(args.DrawingSession, sender, _m, _pal, dt);
         DrawPeerName(args.DrawingSession);
     }

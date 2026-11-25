@@ -107,6 +107,8 @@ struct FileState {
     file: IncomingFile,
     received: i64,
     opened: bool,
+    /// Its last chunk arrived (or it was cancelled): later chunks for it are ignored.
+    done: bool,
 }
 
 /// This session's trust context: our key, the connection's auth string, whether the peer is Drift.
@@ -259,6 +261,9 @@ impl ReceiveSession {
     }
 
     fn cancel(&mut self) -> Vec<Action> {
+        if matches!(self.state, State::Cancelled | State::Done) {
+            return vec![]; // already settled (a payload cancel, then the sharing-level one)
+        }
         self.state = State::Cancelled;
         let mut out: Vec<Action> = self
             .files
@@ -286,11 +291,10 @@ impl ReceiveSession {
         let id = header.id.unwrap_or(0);
 
         if p.packet_type == Some(ptf::PacketType::Control as i32) {
-            // PAYLOAD_CANCELED / PAYLOAD_ERROR for one payload.
-            if let Some(f) = self.files.get(&id) {
-                if f.opened {
-                    return Ok(vec![Action::FileAbort { payload_id: id }]);
-                }
+            // PAYLOAD_CANCELED / PAYLOAD_ERROR: the sender stopped the share (it used to only drop the
+            // file and then wait for it forever if no sharing-level cancel followed)
+            if self.files.contains_key(&id) || self.texts.contains_key(&id) {
+                return Ok(self.cancel());
             }
             return Ok(vec![]);
         }
@@ -313,6 +317,9 @@ impl ReceiveSession {
                     return Err(SessionError::NotAccepted(id));
                 }
                 let f = self.files.get_mut(&id).ok_or(SessionError::UnknownPayload(id))?;
+                if f.done {
+                    return Ok(vec![]); // a repeat of its last chunk, or after a cancel
+                }
                 let mut out = vec![];
                 if !f.opened {
                     f.opened = true;
@@ -336,6 +343,7 @@ impl ReceiveSession {
                     if f.received != f.file.size {
                         return Err(SessionError::Truncated { id, received: f.received, size: f.file.size });
                     }
+                    f.done = true;
                     out.push(Action::FileClose { payload_id: id });
                     out.extend(self.item_done());
                 }
@@ -400,12 +408,13 @@ impl ReceiveSession {
                     })
                     .collect();
                 for f in &files {
-                    self.files.insert(f.payload_id, FileState { file: f.clone(), received: 0, opened: false });
+                    self.files.insert(f.payload_id, FileState { file: f.clone(), received: 0, opened: false, done: false });
                 }
                 for t in &texts {
                     self.texts.insert(t.payload_id, t.clone());
                 }
-                self.remaining = files.len() + texts.len();
+                // count what we track (a repeated payload id is one item, not two)
+                self.remaining = self.files.len() + self.texts.len();
                 self.state = State::AwaitingDecision;
                 Ok(vec![Action::Event(Event::Introduction { files, texts })])
             }
@@ -576,6 +585,17 @@ mod tests {
         feed(&mut s, intro(&[(7, "a", 2)], &[]));
         s.accept();
         assert_eq!(s.on_frame(&file_chunk(7, 0, b"abc", false)), Err(SessionError::Oversize { id: 7, size: 2 }));
+    }
+
+    #[test]
+    fn a_repeated_last_chunk_is_ignored() {
+        let mut s = ReceiveSession::new();
+        feed(&mut s, intro(&[(7, "a", 3), (8, "b", 3)], &[]));
+        s.accept();
+        s.on_frame(&file_chunk(7, 0, b"abc", true)).unwrap();
+        // the same last chunk again must not close the file twice or count it twice
+        assert_eq!(s.on_frame(&file_chunk(7, 3, b"", true)), Ok(vec![]));
+        assert_ne!(s.state(), State::Done, "completed with file 8 still missing");
     }
 
     #[test]

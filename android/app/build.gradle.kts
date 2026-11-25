@@ -44,7 +44,9 @@ dependencies {
 val cargoNdk = tasks.register<Exec>("cargoNdk") {
     val repo = rootProject.projectDir.parentFile
     workingDir = repo
-    val sdk = Properties().apply { rootProject.file("local.properties").inputStream().use { load(it) } }.getProperty("sdk.dir")
+    val props = rootProject.file("local.properties")
+    val sdk = (if (props.exists()) Properties().apply { props.inputStream().use { load(it) } }.getProperty("sdk.dir") else null)
+        ?: System.getenv("ANDROID_HOME") ?: System.getenv("ANDROID_SDK_ROOT") ?: ""
     val ndk = File(sdk, "ndk").listFiles()?.filter { it.isDirectory }?.maxByOrNull { it.name }
     if (ndk != null) environment("ANDROID_NDK_HOME", ndk.absolutePath)
     // The NDK's clang wrapper can't take paths with an apostrophe: build elsewhere.

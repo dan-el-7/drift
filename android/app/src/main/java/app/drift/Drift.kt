@@ -118,6 +118,8 @@ object Drift {
     fun init(ctx: Context) {
         if (core != null) return
         app = ctx.applicationContext
+        // links to files from earlier sends (nothing is being sent yet)
+        runCatching { File(app.cacheDir, "send").deleteRecursively() }
         name = prefs.getString("name", null)?.takeIf { it.isNotBlank() } ?: systemName()
         linkDetails = prefs.getBoolean("link_details", false)
         look = runCatching { Look.valueOf(prefs.getString("look", null) ?: "Ink") }.getOrDefault(Look.Ink)
@@ -230,6 +232,19 @@ object Drift {
         } else visibleUntil = 0
         cmd("visibility", "everyone" to (v != Visibility.Hidden))
         VisibleService.visibilityChanged()
+    }
+
+    // what the core last asked of Bluetooth, to replay once permission is granted (first launch)
+    private var lastListen: Triple<String, Int, ByteArray>? = null
+    private var lastAdvert: ByteArray? = null
+
+    fun permissionsChanged() {
+        lastListen?.let { (uuid, port, token) -> runCatching { Bluetooth.listen(app, uuid, port, token) } }
+        runCatching { Bluetooth.advertise(app, lastAdvert) }
+        if (scanning) runCatching {
+            Bluetooth.stopScan(app)
+            Bluetooth.startScan(app) { data -> cmd("ble_seen", "data" to data.joinToString("") { "%02x".format(it) }) }
+        }
     }
 
     fun scan(on: Boolean) {
@@ -386,14 +401,16 @@ object Drift {
             return
         }
         outbox = null
-        pendingBox = box
+        val pending = PendingSend(box)
+        pendingSends.addLast(pending)
         VisibleService.transferChanged()
         val dir = File(app.cacheDir, "send/${System.nanoTime()}").apply { mkdirs() }
         val paths = JSONArray()
         for (uri in box.uris) {
             val pfd = runCatching { app.contentResolver.openFileDescriptor(uri, "r") }.getOrNull() ?: continue
-            openFds += pfd
-            var name = displayName(uri) ?: "file"
+            pending.fds += pfd
+            // the name comes from the other app: keep it a plain file name inside our folder
+            var name = (displayName(uri) ?: "file").replace('/', '_').replace('\\', '_').takeUnless { it == "." || it == ".." || it.isBlank() } ?: "file"
             var link = File(dir, name)
             var n = 1
             while (link.exists()) link = File(dir, "${name.substringBeforeLast('.')} (${n++}).${name.substringAfterLast('.', "")}".trimEnd('.'))
@@ -401,16 +418,37 @@ object Drift {
         }
         val texts = JSONArray()
         box.text?.let { texts.put(JSONObject().put("kind", if (it.startsWith("http://") || it.startsWith("https://")) "url" else "text").put("body", it)) }
-        pendingTexts = texts.length()
-        pendingKind = box.text?.let { if (it.startsWith("http://") || it.startsWith("https://")) "url" else "text" }
+        pending.texts = texts.length()
+        pending.kind = box.text?.let { if (it.startsWith("http://") || it.startsWith("https://")) "url" else "text" }
+        pending.dir = dir
+        if (paths.length() == 0 && texts.length() == 0) {
+            // nothing we could open: don't send an empty share and call it done
+            pendingSends.remove(pending)
+            pending.release()
+            VisibleService.transferChanged()
+            notice = Notice("Couldn't read ${if (box.uris.size == 1) "the file" else "those files"}", "The app that shared it didn't let Drift open it. Try sharing again, or pick it with Send.")
+            return
+        }
         cmd("send", "device" to device.id, "paths" to paths, "texts" to texts)
     }
 
-    private val openFds = mutableListOf<ParcelFileDescriptor>()
-    private var pendingTexts = 0
-    private var pendingKind: String? = null
-    private var pendingBox: Outbox? = null
-    val preparingSend get() = pendingBox != null
+    /** A send handed to the core, until it shows up as a transfer. Each keeps its own descriptors, closed
+     *  when that send ends (one shared list closed every send's files when any one ended). */
+    private class PendingSend(val box: Outbox) {
+        val fds = mutableListOf<ParcelFileDescriptor>()
+        var texts = 0
+        var kind: String? = null
+        var dir: File? = null
+        fun release() {
+            fds.forEach { runCatching { it.close() } }
+            fds.clear()
+            dir?.deleteRecursively()
+        }
+    }
+
+    private val pendingSends = ArrayDeque<PendingSend>()
+    private val sendsByShare = HashMap<Long, PendingSend>()
+    val preparingSend get() = pendingSends.isNotEmpty()
     var savingFiles = 0
         private set
 
@@ -461,8 +499,15 @@ object Drift {
                     cmd("wifi_connected", "conn" to conn, "fd" to fd, "error" to err)
                 }
             }
-            "bt_advertise" -> Bluetooth.advertise(app, e.optString("data").takeIf { !e.isNull("data") && it.isNotEmpty() }?.let { Bluetooth.hex(it) })
-            "bt_listen" -> Bluetooth.listen(app, e.getString("uuid"), e.getInt("port"), Bluetooth.hex(e.getString("token")))
+            "bt_advertise" -> {
+                lastAdvert = e.optString("data").takeIf { !e.isNull("data") && it.isNotEmpty() }?.let { Bluetooth.hex(it) }
+                Bluetooth.advertise(app, lastAdvert)
+            }
+            "bt_listen" -> {
+                val l = Triple(e.getString("uuid"), e.getInt("port"), Bluetooth.hex(e.getString("token")))
+                lastListen = l
+                Bluetooth.listen(app, l.first, l.second, l.third)
+            }
             "bt_connect" -> Bluetooth.connect(app, e.getString("mac"), e.getString("uuid"), e.getInt("port"), Bluetooth.hex(e.getString("token")))
             "warning" -> notice = Notice(e.optString("text"), e.optString("detail").ifEmpty { null }, lasting = true)
             "device_found" -> {
@@ -484,11 +529,14 @@ object Drift {
                 if (t.state == TState.Request) Notices.incoming(app, t)
             }
             "waiting" -> {
-                val t = find(share) ?: Transfer(share, false, e.optString("name"), e.optJSONArray("files").items { FileItem(it.optString("name"), it.optLong("size")) }, null, texts = pendingTexts, textKind = pendingKind).also {
-                    it.state = TState.Waiting
-                    it.sent = pendingBox
-                    pendingBox = null
-                    transfers.add(0, it)
+                val t = find(share) ?: run {
+                    val p = pendingSends.removeFirstOrNull()
+                    if (p != null) sendsByShare[share] = p
+                    Transfer(share, false, e.optString("name"), e.optJSONArray("files").items { FileItem(it.optString("name"), it.optLong("size")) }, null, texts = p?.texts ?: 0, textKind = p?.kind).also {
+                        it.state = TState.Waiting
+                        it.sent = p?.box
+                        transfers.add(0, it)
+                    }
                 }
                 e.optString("pin").ifEmpty { null }?.let { t.pin = it }
                 VisibleService.transferChanged()
@@ -522,7 +570,14 @@ object Drift {
                 // show it in Files / Downloads, and get a content URI to open it with
                 else MediaScannerConnection.scanFile(app, arrayOf(path), null) { _, uri -> if (uri != null && t != null) main.post { t.savedUris += uri } }
             }
-            "done" -> find(share)?.let { t ->
+            // a send that ended before it reached the other device (couldn't connect): release it and say so
+            "done" -> if (find(share) == null) {
+                sendsByShare.remove(share)?.release() ?: pendingSends.removeFirstOrNull()?.let { p ->
+                    p.release()
+                    if (e.optString("outcome") == "failed") notice = Notice("Couldn't send", e.optString("error").ifEmpty { null })
+                }
+                VisibleService.transferChanged()
+            } else find(share)?.let { t ->
                 t.state = when (e.optString("outcome")) {
                     "completed" -> TState.Done
                     "declined" -> TState.Declined
@@ -532,10 +587,7 @@ object Drift {
                 if (t.state == TState.Done) t.done = t.total
                 t.error = e.optString("error").ifEmpty { null }
                 Notices.remove(app, t.share)
-                if (!t.incoming && transfers.none { !it.incoming && it.state in setOf(TState.Waiting, TState.Xfer) }) {
-                    openFds.forEach { runCatching { it.close() } }
-                    openFds.clear()
-                }
+                if (!t.incoming) sendsByShare.remove(t.share)?.release()
                 VisibleService.transferChanged()
             }
             "trusted" -> trusted = e.optJSONArray("devices").items { TrustedDevice(it.optString("id"), it.optString("name"), it.optBoolean("auto")) }

@@ -49,7 +49,13 @@ public partial class App : Application
 
         // `--mock` runs the UI against a scripted core (design work without a phone).
         var argv = Environment.GetCommandLineArgs();
-        ICore core = argv.Contains("--mock") ? new MockCore() : NativeCore.TryCreate() ?? (ICore)new MockCore();
+        ICore? core = argv.Contains("--mock") ? new MockCore() : NativeCore.TryCreate();
+        if (core == null)
+        {
+            MessageBoxW(IntPtr.Zero, "Drift's core (drift_ffi.dll) is missing or couldn't load.\n\nReinstall Drift from github.com/dan-el-7/drift.", "Drift", 0x10);
+            Exit();
+            return;
+        }
         _window = new MainWindow(core);
         // At sign-in, start quietly only when the tray is enabled.
         var atSignIn = argv.Contains("--tray");
@@ -77,4 +83,7 @@ public partial class App : Application
         Resources["ButtonForegroundPressed"] = new SolidColorBrush(Design.Design.Bg);
         Resources["ButtonBorderBrushPressed"] = new SolidColorBrush(Design.Design.Fg);
     }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    private static extern int MessageBoxW(IntPtr hwnd, string text, string caption, uint type);
 }
