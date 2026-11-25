@@ -39,10 +39,30 @@ fn d2d_metadata() -> Vec<u8> {
     gcm::GcmMetadata { r#type: gcm::Type::DeviceToDeviceMessage as i32, version: Some(1) }.encode_to_vec()
 }
 
+/// One message's sealing, with its sequence number already taken: the keys are copied, so jobs can
+/// run on any thread, in parallel, as long as their output is written in sequence order.
+#[derive(Clone, Copy)]
+pub struct SealJob {
+    key: [u8; 32],
+    hmac: [u8; 32],
+    seq: i32,
+}
+
 impl Sealer {
     /// Wrap a serialized OfflineFrame into a serialized SecureMessage.
     pub fn seal(&mut self, offline_frame: &[u8]) -> Vec<u8> {
+        self.job().seal(offline_frame)
+    }
+
+    /// Take the next sequence number for a message sealed elsewhere (see `SealJob`).
+    pub fn job(&mut self) -> SealJob {
         self.seq += 1;
+        SealJob { key: self.key, hmac: self.hmac, seq: self.seq }
+    }
+}
+
+impl SealJob {
+    pub fn seal(&self, offline_frame: &[u8]) -> Vec<u8> {
         let d2d = gcm::DeviceToDeviceMessage {
             message: Some(offline_frame.to_vec()),
             sequence_number: Some(self.seq),
@@ -103,6 +123,17 @@ impl Opener {
 mod tests {
     use super::*;
     use crate::ukey2::{ClientHandshake, Role, ServerHandshake};
+
+    #[test]
+    fn jobs_sealed_out_of_order_open_in_sequence() {
+        let ((mut a, _), (_, mut b)) = pair();
+        let jobs: Vec<SealJob> = (0..3).map(|_| a.job()).collect();
+        // sealed last-first (as parallel workers may finish), written in sequence order
+        let sealed: Vec<Vec<u8>> = jobs.iter().rev().map(|j| j.seal(format!("m{}", j.seq).as_bytes())).collect();
+        for m in sealed.iter().rev() {
+            assert!(b.open(m).is_ok());
+        }
+    }
 
     fn pair() -> ((Sealer, Opener), (Sealer, Opener)) {
         let (c, ci) = ClientHandshake::new();

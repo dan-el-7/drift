@@ -8,6 +8,7 @@
 //! reads switch once the peer's LAST_WRITE and SAFE_TO_CLOSE have both arrived
 //! on the old channel.
 
+use std::collections::VecDeque;
 use std::time::Duration;
 
 use drift_core::framing;
@@ -116,6 +117,42 @@ fn spawn_sink(mut w: BoxWrite) -> Sink {
 }
 
 /// The writer task ends (after flushing) when every `Writer` clone is dropped.
+/// A frame on its way out: sealed already, or still sealing on a worker thread.
+enum Pending {
+    Ready(Vec<u8>),
+    Sealing(JoinHandle<Vec<u8>>),
+}
+
+impl Pending {
+    fn done(&self) -> bool {
+        match self {
+            Pending::Ready(_) => true,
+            Pending::Sealing(h) => h.is_finished(),
+        }
+    }
+
+    /// The sealed bytes (None if the sealing task died).
+    async fn take(self) -> Option<Vec<u8>> {
+        match self {
+            Pending::Ready(b) => Some(b),
+            Pending::Sealing(h) => h.await.ok(),
+        }
+    }
+}
+
+/// Wait for the oldest frame to finish sealing (it stays first in line). False if sealing failed.
+async fn settle_front(inflight: &mut VecDeque<(Pending, Option<tokio::sync::OwnedSemaphorePermit>)>) -> bool {
+    if let Some((p, _)) = inflight.front_mut() {
+        if let Pending::Sealing(h) = p {
+            match h.await {
+                Ok(bytes) => *p = Pending::Ready(bytes),
+                Err(_) => return false,
+            }
+        }
+    }
+    true
+}
+
 pub fn spawn_writer(w: BoxWrite, mut sealer: Sealer) -> (Writer, JoinHandle<()>) {
     let (tx, mut rx) = mpsc::unbounded_channel::<WriteCmd>();
     let (data_tx, mut data_rx) = mpsc::unbounded_channel::<WriteCmd>();
@@ -124,17 +161,39 @@ pub fn spawn_writer(w: BoxWrite, mut sealer: Sealer) -> (Writer, JoinHandle<()>)
         let mut encrypted = true;
         let mut queue: Vec<(nc::OfflineFrame, Option<tokio::sync::OwnedSemaphorePermit>)> = vec![];
         let mut next: Option<(BoxWrite, bool)> = None;
+        // Chunks are sealed on several cores at once (each takes its sequence number here, in order)
+        // and written in that order. One core sealing everything capped a phone at ~100 MB/s.
+        let par = std::env::var("DRIFT_SEAL_THREADS").ok().and_then(|v| v.parse().ok())
+            .unwrap_or_else(|| std::thread::available_parallelism().map(|n| n.get()).unwrap_or(2))
+            .clamp(1, 8);
+        let mut inflight: VecDeque<(Pending, Option<tokio::sync::OwnedSemaphorePermit>)> = VecDeque::new();
+        let (mut rx_open, mut data_open) = (true, true);
         loop {
+            // write out what's sealed, in order
+            while inflight.front().is_some_and(|(p, _)| p.done()) {
+                let (p, permit) = inflight.pop_front().unwrap();
+                let Some(bytes) = p.take().await else { return };
+                let t = std::time::Instant::now();
+                let sent = sink.tx.send((bytes, permit)).await;
+                crate::stats::QUEUE_WAIT.add(t);
+                if sent.is_err() {
+                    return; // the connection's write failed
+                }
+            }
+            let room = inflight.len() < par;
             let cmd = tokio::select! {
                 biased;
-                c = rx.recv() => match c {
+                c = rx.recv(), if room && rx_open => match c {
                     Some(c) => c,
-                    None => match data_rx.recv().await {
-                        Some(d) => d,
-                        None => break,
-                    },
+                    None => { rx_open = false; continue }
                 },
-                Some(d) = data_rx.recv() => d,
+                d = data_rx.recv(), if room && data_open => match d {
+                    Some(d) => d,
+                    None => { data_open = false; continue }
+                },
+                // the oldest chunk finished sealing: loop round to write it
+                ok = settle_front(&mut inflight), if !inflight.is_empty() => { if !ok { return } continue }
+                else => break,
             };
             let batch = match cmd {
                 WriteCmd::Frame(f) if next.is_some() => {
@@ -153,6 +212,13 @@ pub fn spawn_writer(w: BoxWrite, mut sealer: Sealer) -> (Writer, JoinHandle<()>)
                 }
                 WriteCmd::Resume => {
                     if let Some((w, enc)) = next.take() {
+                        // everything already sealed for the prior channel goes there first
+                        while let Some((p, permit)) = inflight.pop_front() {
+                            let Some(bytes) = p.take().await else { return };
+                            if sink.tx.send((bytes, permit)).await.is_err() {
+                                return;
+                            }
+                        }
                         let Sink { tx: prior_tx, task: prior_task } = std::mem::replace(&mut sink, spawn_sink(w));
                         encrypted = enc;
                         // Upstream (BwuManager::ProcessSafeToClosePriorChannelEvent):
@@ -183,25 +249,32 @@ pub fn spawn_writer(w: BoxWrite, mut sealer: Sealer) -> (Writer, JoinHandle<()>)
                 if permit.is_none() {
                     tracing::debug!(kind = ?f.v1.as_ref().and_then(|v| v.r#type), "writing control frame");
                 }
-                let t = std::time::Instant::now();
-                // Sealing a 512 KiB chunk is ~4 ms of pure CPU. The socket task we just woke sits in this
-                // worker's LIFO slot (other workers can't steal it) until we yield, so without this it
-                // only ran between seals: measured 54% sealing / 38% socket idle on the phone. Marking
-                // the seal as blocking hands this worker's queue to another thread meanwhile.
-                let bytes = if encrypted && tokio::runtime::Handle::try_current().is_ok_and(|h| h.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread) {
-                    tokio::task::block_in_place(|| sealer.seal(&f.encode_to_vec()))
-                } else if encrypted {
-                    sealer.seal(&f.encode_to_vec())
+                let plain = f.encode_to_vec();
+                let pending = if !encrypted {
+                    Pending::Ready(plain)
+                } else if plain.len() < 64 * 1024 {
+                    // control frames and small chunks: sealing costs less than a thread hop
+                    let t = std::time::Instant::now();
+                    let bytes = sealer.seal(&plain);
+                    crate::stats::SEAL.add(t);
+                    Pending::Ready(bytes)
                 } else {
-                    f.encode_to_vec()
+                    let job = sealer.job();
+                    Pending::Sealing(tokio::task::spawn_blocking(move || {
+                        let t = std::time::Instant::now();
+                        let bytes = job.seal(&plain);
+                        crate::stats::SEAL.add(t);
+                        bytes
+                    }))
                 };
-                crate::stats::SEAL.add(t);
-                let t = std::time::Instant::now();
-                let sent = sink.tx.send((bytes, permit)).await;
-                crate::stats::QUEUE_WAIT.add(t);
-                if sent.is_err() {
-                    return; // the connection's write failed
-                }
+                inflight.push_back((pending, permit));
+            }
+        }
+        // closing: write whatever is still sealing, then shut the socket
+        while let Some((p, permit)) = inflight.pop_front() {
+            let Some(bytes) = p.take().await else { break };
+            if sink.tx.send((bytes, permit)).await.is_err() {
+                break;
             }
         }
         drop(sink.tx);
