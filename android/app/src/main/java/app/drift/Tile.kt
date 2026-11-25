@@ -13,6 +13,7 @@ import android.os.SystemClock
 import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
 import android.text.format.Formatter
+import kotlin.math.ceil
 
 /**
  * Quick Settings tile: tap to be visible for 10 minutes without opening the app, tap again to hide.
@@ -92,10 +93,13 @@ class VisibleService : Service() {
 
             val percent = (transfer.progress * 100).toInt()
             val remaining = (transfer.total - transfer.done).coerceAtLeast(0)
-            val speed = if (transfer.bps > 0) "${size(transfer.bps.toLong())}/s · " else ""
-            val summary = "$percent% · $speed${size(remaining)} left"
+            val rate = transfer.bps.takeIf { it.isFinite() && it > 0 }
+            val estimate = if (remaining == 0L) "Finishing…" else rate?.let { timeLeft(remaining, it) }
+            val summary = "$percent%" + (estimate?.let { " · $it" } ?: "")
+            val speed = rate?.let { "${size(it.toLong())}/s · " }.orEmpty()
+            val sizes = "$speed${size(remaining)} left · ${size(transfer.total)} total"
             return Status("$direction ${transfer.title}", summary, percent, busy = true,
-                expanded = "$summary · ${size(transfer.total)} total\n$direction $peer" +
+                expanded = "$summary\n$sizes\n$direction $peer" +
                     if (transfers.size > 1) " · $detail" else "")
         }
         if (Drift.preparingSend) return Status("Preparing to send", "Drift", busy = true)
@@ -105,6 +109,16 @@ class VisibleService : Service() {
     }
 
     private fun size(bytes: Long): String = Formatter.formatShortFileSize(this, bytes)
+
+    private fun timeLeft(bytes: Long, bytesPerSecond: Float): String {
+        val seconds = ceil(bytes / bytesPerSecond.toDouble()).toLong()
+        val duration = when {
+            seconds < 60 -> "${seconds}s"
+            seconds < 3_600 -> "${seconds / 60}m ${seconds % 60}s"
+            else -> "${seconds / 3_600}h ${seconds / 60 % 60}m"
+        }
+        return "~$duration left"
+    }
 
     private fun notification(s: Status): Notification {
         val intent = Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
